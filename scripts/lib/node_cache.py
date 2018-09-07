@@ -3,7 +3,7 @@ import os
 import hashlib
 
 if False:
-    from typing import Optional, List, IO, Text, Tuple, Any
+    from typing import Optional, List, IO, Tuple, Any
 
 from scripts.lib.zulip_tools import subprocess_text_output, run
 
@@ -29,7 +29,7 @@ def get_yarn_args(production):
     return yarn_args
 
 def generate_sha1sum_node_modules(setup_dir=None, production=DEFAULT_PRODUCTION):
-    # type: (Optional[Text], bool) -> str
+    # type: (Optional[str], bool) -> str
     if setup_dir is None:
         setup_dir = os.path.realpath(os.getcwd())
     PACKAGE_JSON_FILE_PATH = os.path.join(setup_dir, 'package.json')
@@ -90,6 +90,8 @@ def do_yarn_install(target_path, yarn_args, success_stamp, stdout=None, stderr=N
         if os.path.exists("node_modules"):
             cmds.append(["cp", "-R", "node_modules/", cached_node_modules])
         cd_exec = os.path.join(ZULIP_PATH, "scripts/lib/cd_exec")
+        if os.environ.get('CUSTOM_CA_CERTIFICATES'):
+            cmds.append([YARN_BIN, "config", "set", "cafile", os.environ['CUSTOM_CA_CERTIFICATES']])
         cmds.append([cd_exec, target_path, YARN_BIN, "install", "--non-interactive"] +
                     yarn_args)
     cmds.append(['touch', success_stamp])

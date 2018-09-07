@@ -97,7 +97,8 @@ var stream_name_error = (function () {
     return self;
 }());
 
-function ajaxSubscribeForCreation(stream_name, description, principals, invite_only, announce) {
+function ajaxSubscribeForCreation(stream_name, description, principals, invite_only,
+                                  is_announcement_only, announce, history_public_to_subscribers) {
     // Subscribe yourself and possible other people to a new stream.
     return channel.post({
         url: "/json/users/me/subscriptions",
@@ -105,7 +106,9 @@ function ajaxSubscribeForCreation(stream_name, description, principals, invite_o
                                                description: description}]),
                principals: JSON.stringify(principals),
                invite_only: JSON.stringify(invite_only),
+               is_announcement_only: JSON.stringify(is_announcement_only),
                announce: JSON.stringify(announce),
+               history_public_to_subscribers: JSON.stringify(history_public_to_subscribers),
         },
         success: function () {
             $("#create_stream_name").val("");
@@ -143,7 +146,8 @@ function update_announce_stream_state() {
     var announce_stream_checkbox = $('#announce-new-stream input');
     var announce_stream_label = $('#announce-new-stream');
     var disable_it = false;
-    var is_invite_only = $('input:radio[name=privacy]:checked').val() === 'invite-only';
+    var privacy_type = $('input:radio[name=privacy]:checked').val();
+    var is_invite_only = privacy_type === "invite-only" || privacy_type === "invite-only-public-history";
     announce_stream_label.removeClass("control-label-disabled");
 
     if (is_invite_only) {
@@ -168,21 +172,39 @@ function get_principals() {
 function create_stream() {
     var stream_name = $.trim($("#create_stream_name").val());
     var description = $.trim($("#create_stream_description").val());
-    var is_invite_only = $('#stream_creation_form input[name=privacy]:checked').val() === "invite-only";
+    var privacy_setting = $('#stream_creation_form input[name=privacy]:checked').val();
+    var is_announcement_only = $('#stream_creation_form input[name=is-announcement-only]').prop('checked');
     var principals = get_principals();
+
+    var invite_only;
+    var history_public_to_subscribers;
+
+    if (privacy_setting === 'invite-only') {
+        invite_only = true;
+        history_public_to_subscribers = false;
+    } else if (privacy_setting === 'invite-only-public-history') {
+        invite_only = true;
+        history_public_to_subscribers = true;
+    } else {
+        invite_only = false;
+        history_public_to_subscribers = true;
+    }
 
     created_stream = stream_name;
 
-    var announce = (!!page_params.notifications_stream &&
-        $('#announce-new-stream input').prop('checked'));
+    var announce = !!page_params.notifications_stream &&
+        $('#announce-new-stream input').prop('checked');
 
     loading.make_indicator($('#stream_creating_indicator'), {text: i18n.t('Creating stream...')});
 
-    ajaxSubscribeForCreation(stream_name,
+    ajaxSubscribeForCreation(
+        stream_name,
         description,
         principals,
-        is_invite_only,
-        announce
+        invite_only,
+        is_announcement_only,
+        announce,
+        history_public_to_subscribers
     );
 }
 
@@ -270,7 +292,6 @@ exports.show_new_stream_modal = function () {
             }
         });
 
-        update_announce_stream_state();
         e.preventDefault();
     });
 };
@@ -307,9 +328,8 @@ exports.create_handlers_for_users = function (container) {
 
     container.on('click', '#copy-from-stream-expand-collapse', function (e) {
         $('#stream-checkboxes').toggle();
-        $("#copy-from-stream-expand-collapse .toggle").toggleClass('icon-vector-caret-right icon-vector-caret-down');
+        $("#copy-from-stream-expand-collapse .toggle").toggleClass('fa-caret-right fa-caret-down');
         e.preventDefault();
-        update_announce_stream_state();
     });
 
     // Search People or Streams
@@ -348,7 +368,6 @@ exports.create_handlers_for_users = function (container) {
             });
         }());
 
-        update_announce_stream_state();
         e.preventDefault();
     });
 };
@@ -408,10 +427,11 @@ exports.set_up_handlers = function () {
 
     container.on("mouseover", "#announce-stream-docs", function (e) {
         var announce_stream_docs = $("#announce-stream-docs");
-        announce_stream_docs.popover({placement: "right",
-                                      content: templates.render('announce_stream_docs', {
-                                        notifications_stream: page_params.notifications_stream}),
-                                      trigger: "manual"});
+        announce_stream_docs.popover({
+            placement: "right",
+            content: templates.render('announce_stream_docs', {
+                notifications_stream: page_params.notifications_stream}),
+            trigger: "manual"});
         announce_stream_docs.popover('show');
         announce_stream_docs.data('popover').tip().css('z-index', 2000);
         announce_stream_docs.data('popover').tip().find('.popover-content').css('margin', '9px 14px');
@@ -430,3 +450,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = stream_create;
 }
+window.stream_create = stream_create;

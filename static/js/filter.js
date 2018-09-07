@@ -36,8 +36,8 @@ function zephyr_topic_name_match(message, operand) {
 
 function message_in_home(message) {
     if (message.type === "private" || message.mentioned ||
-        (page_params.narrow_stream !== undefined &&
-         message.stream.toLowerCase() === page_params.narrow_stream.toLowerCase())) {
+        page_params.narrow_stream !== undefined &&
+         message.stream.toLowerCase() === page_params.narrow_stream.toLowerCase()) {
         return true;
     }
 
@@ -48,7 +48,7 @@ function message_matches_search_term(message, operator, operand) {
     switch (operator) {
     case 'is':
         if (operand === 'private') {
-            return (message.type === 'private');
+            return message.type === 'private';
         } else if (operand === 'starred') {
             return message.starred;
         } else if (operand === 'mentioned') {
@@ -73,7 +73,7 @@ function message_matches_search_term(message, operator, operand) {
         return true;
 
     case 'id':
-        return (message.id.toString() === operand);
+        return message.id.toString() === operand;
 
     case 'stream':
         if (message.type !== 'stream') {
@@ -89,13 +89,13 @@ function message_matches_search_term(message, operator, operand) {
         // the operand.
         var stream_id = stream_data.get_stream_id(operand);
         if (stream_id) {
-            return (message.stream_id === stream_id);
+            return message.stream_id === stream_id;
         }
 
         // We need this fallback logic in case we have a message
         // loaded for a stream that we are no longer
         // subscribed to (or that was deleted).
-        return (message.stream.toLowerCase() === operand);
+        return message.stream.toLowerCase() === operand;
 
     case 'topic':
         if (message.type !== 'stream') {
@@ -106,7 +106,7 @@ function message_matches_search_term(message, operator, operand) {
         if (page_params.realm_is_zephyr_mirror_realm) {
             return zephyr_topic_name_match(message, operand);
         }
-        return (message.subject.toLowerCase() === operand);
+        return message.subject.toLowerCase() === operand;
 
 
     case 'sender':
@@ -121,7 +121,7 @@ function message_matches_search_term(message, operator, operand) {
         if (!user_ids) {
             return false;
         }
-        return (user_ids.includes(operand_ids[0]));
+        return user_ids.indexOf(operand_ids[0]) !== -1;
         // We should also check if the current user is in the recipient list (user_ids) of the
         // message, but it is implicit by the fact that the current user has access to the message.
 
@@ -227,9 +227,9 @@ Filter.canonicalize_term = function (opts) {
    URI encoding to avoid problematic characters. */
 function encodeOperand(operand) {
     return operand.replace(/%/g, '%25')
-                  .replace(/\+/g, '%2B')
-                  .replace(/ /g, '+')
-                  .replace(/"/g, '%22');
+        .replace(/\+/g, '%2B')
+        .replace(/ /g, '+')
+        .replace(/"/g, '%22');
 }
 
 function decodeOperand(encoded, operator) {
@@ -324,18 +324,18 @@ Filter.unparse = function (operators) {
 
 
 Filter.prototype = {
-    predicate: function Filter_predicate() {
+    predicate: function () {
         if (this._predicate === undefined) {
             this._predicate = this._build_predicate();
         }
         return this._predicate;
     },
 
-    operators: function Filter_operators() {
+    operators: function () {
         return this._operators;
     },
 
-    public_operators: function Filter_public_operators() {
+    public_operators: function () {
         var safe_to_return = _.filter(this._operators, function (value) {
             // Filter out the embedded narrow (if any).
             return !(page_params.narrow_stream !== undefined &&
@@ -345,43 +345,59 @@ Filter.prototype = {
         return safe_to_return;
     },
 
-    operands: function Filter_get_operands(operator) {
+    operands: function (operator) {
         return _.chain(this._operators)
-            .filter(function (elem) { return !elem.negated && (elem.operator === operator); })
+            .filter(function (elem) { return !elem.negated && elem.operator === operator; })
             .map(function (elem) { return elem.operand; })
             .value();
     },
 
-    has_operand: function Filter_has_operand(operator, operand) {
+    has_operand: function (operator, operand) {
         return _.any(this._operators, function (elem) {
             return !elem.negated && (elem.operator === operator && elem.operand === operand);
         });
     },
 
-    has_operator: function Filter_has_operator(operator) {
+    has_operator: function (operator) {
         return _.any(this._operators, function (elem) {
-            if (elem.negated && (!_.contains(['search', 'has'], elem.operator))) {
+            if (elem.negated && !_.contains(['search', 'has'], elem.operator)) {
                 return false;
             }
             return elem.operator === operator;
         });
     },
 
-    is_search: function Filter_is_search() {
+    is_search: function () {
         return this.has_operator('search');
     },
 
-    can_apply_locally: function Filter_can_apply_locally() {
-        return (!this.is_search()) && (!this.has_operator('has'));
+    can_apply_locally: function () {
+        if (this.is_search()) {
+            // The semantics for matching keywords are implemented
+            // by database plugins, and we don't have JS code for
+            // that, plus search queries tend to go too far back in
+            // history.
+            return false;
+        }
+
+        if (this.has_operator('has')) {
+            // See #6186 to see why we currently punt on 'has:foo'
+            // queries.  This can be fixed, there are just some random
+            // complications that make it non-trivial.
+            return false;
+        }
+
+        // If we get this far, we're good!
+        return true;
     },
 
-    _canonicalize_operators: function Filter__canonicalize_operators(operators_mixed_case) {
+    _canonicalize_operators: function (operators_mixed_case) {
         return _.map(operators_mixed_case, function (tuple) {
             return Filter.canonicalize_term(tuple);
         });
     },
 
-    filter_with_new_topic: function Filter_filter_with_new_topic(new_topic) {
+    filter_with_new_topic: function (new_topic) {
         var terms = _.map(this._operators, function (term) {
             var new_term = _.clone(term);
             if (new_term.operator === 'topic' && !new_term.negated) {
@@ -392,31 +408,105 @@ Filter.prototype = {
         return new Filter(terms);
     },
 
-    has_topic: function Filter_has_topic(stream_name, topic) {
+    has_topic: function (stream_name, topic) {
         return this.has_operand('stream', stream_name) && this.has_operand('topic', topic);
+    },
+
+    sorted_term_types: function () {
+        var terms = this._operators;
+        var term_types = _.map(terms, Filter.term_type);
+        var sorted_terms = Filter.sorted_term_types(term_types);
+        return sorted_terms;
+    },
+
+    is_exactly: function () {
+        // TODO: in ES6 use spread operator
+        //
+        // Examples calls:
+        //     filter.is_exactly('stream', 'topic')
+        //     filter.is_exactly('pm-with')
+        var wanted_term_types = [].slice.call(arguments);
+        var term_types = this.sorted_term_types();
+
+        return _.isEqual(term_types, wanted_term_types);
+    },
+
+    is_reading_mode: function () {
+        // We only turn on "reading mode" for filters that
+        // have contiguous messages for a narrow, as opposed
+        // to "random access" queries like search:<keyword>
+        // or id:<number> that jump you to parts of the message
+        // view where you might only care about reading the
+        // current message.
+        var term_types = this.sorted_term_types();
+        var wanted_list = [
+            ['stream'],
+            ['stream', 'topic'],
+            ['is-private'],
+            ['pm-with'],
+        ];
+        return _.any(wanted_list, function (wanted_types) {
+            return _.isEqual(wanted_types, term_types);
+        });
+    },
+
+    can_bucket_by: function () {
+        // TODO: in ES6 use spread operator
+        //
+        // Examples call:
+        //     filter.can_bucket_by('stream', 'topic')
+        //
+        // The use case of this function is that we want
+        // to know if a filter can start with a bucketing
+        // data structure similar to the ones we have in
+        // unread.js to pre-filter ids, rather than apply
+        // a predicate to a larger list of candidate ids.
+        //
+        // (It's for optimization, basically.)
+        var wanted_term_types = [].slice.call(arguments);
+        var all_term_types = this.sorted_term_types();
+        var term_types = all_term_types.slice(0, wanted_term_types.length);
+
+        return _.isEqual(term_types, wanted_term_types);
+    },
+
+    first_valid_id_from: function (msg_ids) {
+        var predicate = this.predicate();
+
+        var first_id = _.find(msg_ids, function (msg_id) {
+            var message = message_store.get(msg_id);
+
+            if (message === undefined) {
+                return false;
+            }
+
+            return predicate(message);
+        });
+
+        return first_id;
     },
 
     update_email: function (user_id, new_email) {
         _.each(this._operators, function (term) {
             switch (term.operator) {
-                case 'group-pm-with':
-                case 'pm-with':
-                case 'sender':
-                case 'from':
-                    term.operand = people.update_email_in_reply_to(
-                        term.operand,
-                        user_id,
-                        new_email
-                    );
+            case 'group-pm-with':
+            case 'pm-with':
+            case 'sender':
+            case 'from':
+                term.operand = people.update_email_in_reply_to(
+                    term.operand,
+                    user_id,
+                    new_email
+                );
             }
         });
     },
 
     // Build a filter function from a list of operators.
-    _build_predicate: function Filter__build_predicate() {
+    _build_predicate: function () {
         var operators = this._operators;
 
-        if (! this.can_apply_locally()) {
+        if (!this.can_apply_locally()) {
             return function () { return true; };
         }
 
@@ -436,6 +526,52 @@ Filter.prototype = {
     },
 };
 
+Filter.term_type = function (term) {
+    var operator = term.operator;
+    var operand = term.operand;
+    var negated = term.negated;
+
+    var result = negated ? 'not-' : '';
+
+    result += operator;
+
+    if (_.contains(['is', 'has'], operator)) {
+        result += '-' + operand;
+    }
+
+    return result;
+};
+
+Filter.sorted_term_types = function (term_types) {
+    var levels = [
+        'stream', 'topic',
+        'pm-with', 'group-pm-with', 'sender',
+        'near', 'id',
+        'is-alerted', 'is-mentioned', 'is-private',
+        'is-starred', 'is-unread',
+        'has-link', 'has-image', 'has-attachment',
+        'search',
+    ];
+
+    function level(term_type) {
+        var i = levels.indexOf(term_type);
+        if (i === -1) {
+            i = 999;
+        }
+        return i;
+    }
+
+    function compare(a, b) {
+        var diff = level(a) - level(b);
+        if (diff !== 0) {
+            return diff;
+        }
+        return util.strcmp(a, b);
+    }
+
+    return _.clone(term_types).sort(compare);
+};
+
 Filter.operator_to_prefix = function (operator, negated) {
     var verb;
 
@@ -452,6 +588,7 @@ Filter.operator_to_prefix = function (operator, negated) {
     case 'near':
         return verb + 'messages around';
 
+    // Note: We hack around using this in "describe" below.
     case 'has':
         return verb + 'messages with one or more';
 
@@ -482,8 +619,20 @@ Filter.operator_to_prefix = function (operator, negated) {
     return '';
 };
 
+function describe_is_operator(operator) {
+    var verb = operator.negated ? 'exclude ' : '';
+    var operand = operator.operand;
+    var operand_list = ['private', 'starred', 'alerted', 'unread'];
+    if (operand_list.indexOf(operand) !== -1) {
+        return verb + operand + ' messages';
+    } else if (operand === 'mentioned') {
+        return verb + '@-mentions';
+    }
+    return 'invalid ' + operand + ' operand for is operator';
+}
+
 // Convert a list of operators to a human-readable description.
-Filter.describe = function (operators) {
+function describe_unescaped(operators) {
     if (operators.length === 0) {
         return 'all messages';
     }
@@ -492,7 +641,7 @@ Filter.describe = function (operators) {
 
     if (operators.length >= 2) {
         var is = function (term, expected) {
-            return (term.operator === expected) && !term.negated;
+            return term.operator === expected && !term.negated;
         };
 
         if (is(operators[0], 'stream') && is(operators[1], 'topic')) {
@@ -507,20 +656,16 @@ Filter.describe = function (operators) {
     var more_parts = _.map(operators, function (elem) {
         var operand = elem.operand;
         var canonicalized_operator = Filter.canonicalize_operator(elem.operator);
-        if (canonicalized_operator ==='is') {
-            var verb = elem.negated ? 'exclude ' : '';
-            if (operand === 'private') {
-                return verb + 'private messages';
-            } else if (operand === 'starred') {
-                return verb + 'starred messages';
-            } else if (operand === 'mentioned') {
-                return verb + '@-mentions';
-            } else if (operand === 'alerted') {
-                return verb + 'alerted messages';
-            } else if (operand === 'unread') {
-                return verb + 'unread messages';
+        if (canonicalized_operator === 'is') {
+            return describe_is_operator(elem);
+        }
+        if (canonicalized_operator === 'has') {
+            // search_suggestion.get_suggestions takes care that this message will
+            // only be shown if the `has` operator is not at the last.
+            var valid_has_operands = ['image', 'images', 'link', 'links', 'attachment', 'attachments'];
+            if (valid_has_operands.indexOf(operand) === -1) {
+                return 'invalid ' + operand + ' operand for has operator';
             }
-            return operand + ' messages';
         }
         var prefix_for_operator = Filter.operator_to_prefix(canonicalized_operator,
                                                             elem.negated);
@@ -530,8 +675,11 @@ Filter.describe = function (operators) {
         return "unknown operator";
     });
     return parts.concat(more_parts).join(', ');
-};
+}
 
+Filter.describe = function (operators) {
+    return Handlebars.Utils.escapeExpression(describe_unescaped(operators));
+};
 
 return Filter;
 
@@ -539,3 +687,5 @@ return Filter;
 if (typeof module !== 'undefined') {
     module.exports = Filter;
 }
+
+window.Filter = Filter;

@@ -13,35 +13,54 @@ var composebox_typeahead = (function () {
 
 var exports = {};
 
-var seen_topics = new Dict();
-
-exports.add_topic = function (uc_stream, uc_topic) {
-    // For Denmark/FooBar, we set
-    // seen_topics['denmark']['foobar'] to 'FooBar',
-    // where seen_topics is a Dict of Dicts
-    var stream = uc_stream.toLowerCase();
-    var topic = uc_topic.toLowerCase();
-
-    if (! seen_topics.has(stream)) {
-        seen_topics.set(stream, new Dict());
+exports.topics_seen_for = function (stream_name) {
+    var stream_id = stream_data.get_stream_id(stream_name);
+    if (!stream_id) {
+        return [];
     }
-    var topic_dict = seen_topics.get(stream);
-    if (! topic_dict.has(topic)) {
-        topic_dict.set(topic, uc_topic);
-    }
-};
-
-exports.topics_seen_for = function (stream) {
-    stream = stream.toLowerCase();
-    if (seen_topics.has(stream)) {
-        return seen_topics.get(stream).values().sort();
-    }
-    return [];
+    var topic_names = topic_data.get_recent_names(stream_id);
+    return topic_names;
 };
 
 function query_matches_language(query, lang) {
     query = query.toLowerCase();
     return lang.indexOf(query) !== -1;
+}
+
+function query_matches_string(query, source_str, split_char) {
+    // When `abc ` with a space at the end is typed in a
+    // contenteditable widget such as the composebox PM section, the
+    // space at the end was a `no break-space (U+00A0)` instead of
+    // `space (U+0020)`, which lead to no matches in those cases.
+    query = query.replace(/\u00A0/g, String.fromCharCode(32));
+    // If query doesn't contain a separator, we just want an exact
+    // match where query is a substring of one of the target characters.
+    if (query.indexOf(split_char) > 0) {
+        // If there's a whitespace character in the query, then we
+        // require a perfect prefix match (e.g. for 'ab cd ef',
+        // query needs to be e.g. 'ab c', not 'cd ef' or 'b cd
+        // ef', etc.).
+        var queries = query.split(split_char);
+        var sources = source_str.split(split_char);
+        var i;
+
+        for (i = 0; i < queries.length - 1; i += 1) {
+            if (sources[i] !== queries[i]) {
+                return false;
+            }
+        }
+
+        // This block is effectively a final iteration of the last
+        // loop.  What differs is that for the last word, a
+        // partial match at the beginning of the word is OK.
+        if (sources[i] === undefined) {
+            return false;
+        }
+        return sources[i].indexOf(queries[i]) === 0;
+    }
+
+    // For a single token, the match can be anywhere in the string.
+    return source_str.indexOf(query) !== -1;
 }
 
 // This function attempts to match a query with source's attributes.
@@ -52,36 +71,9 @@ function query_matches_language(query, lang) {
 // account, there might be 2 attrs: their full name and their email.
 // * split_char is the separator for this syntax (e.g. ' ').
 function query_matches_source_attrs(query, source, match_attrs, split_char) {
-    // If query doesn't contain a separator, we just want an exact
-    // match where query is a substring of one of the target characers.
     return _.any(match_attrs, function (attr) {
         var source_str = source[attr].toLowerCase();
-        if (query.indexOf(split_char) > 0) {
-            // If there's a whitespace character in the query, then we
-            // require a perfect prefix match (e.g. for 'ab cd ef',
-            // query needs to be e.g. 'ab c', not 'cd ef' or 'b cd
-            // ef', etc.).
-            var queries = query.split(split_char);
-            var sources = source_str.split(split_char);
-            var i;
-
-            for (i = 0; i < queries.length - 1; i += 1) {
-                if (sources[i] !== queries[i]) {
-                    return false;
-                }
-            }
-
-            // This block is effectively a final iteration of the last
-            // loop.  What differs is that for the last word, a
-            // partial match at the beginning of the word is OK.
-            if (sources[i] === undefined) {
-                return false;
-            }
-            return sources[i].indexOf(queries[i]) === 0;
-        }
-
-        // For a single token, the match can be anywhere in the string.
-        return source_str.indexOf(query) !== -1;
+        return query_matches_string(query, source_str, split_char);
     });
 }
 
@@ -95,6 +87,14 @@ function query_matches_user_group_or_stream(query, user_group_or_stream) {
     // Case-insensitive.
     query = query.toLowerCase();
     return query_matches_source_attrs(query, user_group_or_stream, ["name", "description"], " ");
+}
+
+function query_matches_person_or_user_group(query, item) {
+    if (user_groups.is_user_group(item)) {
+        return query_matches_user_group_or_stream(query, item);
+    }
+
+    return query_matches_person(query, item);
 }
 
 // Case-insensitive
@@ -114,7 +114,7 @@ var nextFocus = false;
 function handle_keydown(e) {
     var code = e.keyCode || e.which;
 
-    if (code === 13 || (code === 9 && !e.shiftKey)) { // Enter key or tab key
+    if (code === 13 || code === 9 && !e.shiftKey) { // Enter key or tab key
         if (e.target.id === "stream" || e.target.id === "subject" || e.target.id === "private_message_recipient") {
             // For enter, prevent the form from submitting
             // For tab, prevent the focus from changing again
@@ -228,7 +228,7 @@ function handle_keydown(e) {
 
 function handle_keyup(e) {
     var code = e.keyCode || e.which;
-    if (code === 13 || (code === 9 && !e.shiftKey)) { // Enter key or tab key
+    if (code === 13 || code === 9 && !e.shiftKey) { // Enter key or tab key
         if (nextFocus) {
             ui_util.focus_on(nextFocus);
             nextFocus = false;
@@ -276,23 +276,23 @@ exports.tokenize_compose_str = function (s) {
     while (i > min_i) {
         i -= 1;
         switch (s[i]) {
-            case '`':
-            case '~':
-                // Code block must start on a new line
-                if (i === 2) {
-                    return s.slice(0);
-                } else if (i > 2 && s[i-3] === "\n") {
-                    return s.slice(i-2);
-                }
-                break;
-            case '#':
-            case '@':
-            case ':':
-                if (i === 0) {
-                    return s.slice(i);
-                } else if (/[\s(){}\[\]]/.test(s[i-1])) {
-                    return s.slice(i);
-                }
+        case '`':
+        case '~':
+            // Code block must start on a new line
+            if (i === 2) {
+                return s.slice(0);
+            } else if (i > 2 && s[i - 3] === "\n") {
+                return s.slice(i - 2);
+            }
+            break;
+        case '#':
+        case '@':
+        case ':':
+            if (i === 0) {
+                return s.slice(i);
+            } else if (/[\s(){}\[\]]/.test(s[i - 1])) {
+                return s.slice(i);
+            }
         }
     }
 
@@ -351,13 +351,16 @@ exports.compose_content_begins_typeahead = function (query) {
         if (/^:-.?$/.test(current_token) || /^:[^a-z+]?$/.test(current_token)) {
             return false;
         }
+        // Don't autocomplete if there is a space following a ':'
+        if (current_token[1] === " ") {
+            return false;
+        }
         this.completing = 'emoji';
         this.token = current_token.substring(1);
         return emoji.emojis;
     }
 
     if (this.options.completions.mention && current_token[0] === '@') {
-        // Don't autocomplete if there is a space following an '@'
         current_token = current_token.substring(1);
         if (current_token.startsWith('**')) {
             current_token = current_token.substring(2);
@@ -368,29 +371,27 @@ exports.compose_content_begins_typeahead = function (query) {
             return false;
         }
 
+        // Don't autocomplete if there is a space following an '@'
         if (current_token[0] === " ") {
             return false;
         }
 
         this.completing = 'mention';
         this.token = current_token;
-        var all_item = {
-            special_item_text: "all (Notify everyone)",
-            email: "all",
-            // Always sort above, under the assumption that names will
-            // be longer and only contain "all" as a substring.
-            pm_recipient_count: Infinity,
-            full_name: "all",
-        };
-        var everyone_item = {
-            special_item_text: "everyone (Notify everyone)",
-            email: "everyone",
-            pm_recipient_count: Infinity,
-            full_name: "everyone",
-        };
+        var all_items = _.map(['all', 'everyone', 'stream'], function (mention) {
+            return {
+                special_item_text: i18n.t("__wildcard_mention_token__ (Notify stream)",
+                                          {wildcard_mention_token: mention}),
+                email: mention,
+                // Always sort above, under the assumption that names will
+                // be longer and only contain "all" as a substring.
+                pm_recipient_count: Infinity,
+                full_name: mention,
+            };
+        });
         var persons = people.get_realm_persons();
         var groups = user_groups.get_realm_user_groups();
-        return [].concat(persons, [all_item, everyone_item], groups);
+        return [].concat(persons, all_items, groups);
     }
 
     if (this.options.completions.stream && current_token[0] === '#') {
@@ -410,7 +411,7 @@ exports.compose_content_begins_typeahead = function (query) {
 
         this.completing = 'stream';
         this.token = current_token;
-        return stream_data.get_streams_for_settings_page();
+        return stream_data.get_unsorted_subs();
     }
     return false;
 };
@@ -419,13 +420,7 @@ exports.content_highlighter = function (item) {
     if (this.completing === 'emoji') {
         return typeahead_helper.render_emoji(item);
     } else if (this.completing === 'mention') {
-        var rendered;
-        if (user_groups.is_user_group(item)) {
-            rendered = typeahead_helper.render_user_group(item);
-        } else {
-            rendered = typeahead_helper.render_person(item);
-        }
-        return rendered;
+        return typeahead_helper.render_person_or_user_group(item);
     } else if (this.completing === 'stream') {
         return typeahead_helper.render_stream(item);
     } else if (this.completing === 'syntax') {
@@ -445,9 +440,9 @@ exports.content_typeahead_selected = function (item) {
         if (beginning.lastIndexOf(":") === 0 ||
             beginning.charAt(beginning.lastIndexOf(":") - 1) === " " ||
             beginning.charAt(beginning.lastIndexOf(":") - 1) === "\n") {
-            beginning = (beginning.substring(0, beginning.length - this.token.length - 1)+ ":" + item.emoji_name + ": ");
+            beginning = beginning.substring(0, beginning.length - this.token.length - 1) + ":" + item.emoji_name + ": ";
         } else {
-            beginning = (beginning.substring(0, beginning.length - this.token.length - 1) + " :" + item.emoji_name + ": ");
+            beginning = beginning.substring(0, beginning.length - this.token.length - 1) + " :" + item.emoji_name + ": ";
         }
     } else if (this.completing === 'mention') {
         beginning = beginning.substring(0, beginning.length - this.token.length - 1);
@@ -460,7 +455,11 @@ exports.content_typeahead_selected = function (item) {
             beginning += '@*' + item.name + '* ';
             $(document).trigger('usermention_completed.zulip', {user_group: item});
         } else {
-            beginning += '@**' + item.full_name + '** ';
+            beginning += '@**' + item.full_name;
+            if (people.is_duplicate_full_name(item.full_name)) {
+                beginning += '|' + item.user_id;
+            }
+            beginning += '** ';
             $(document).trigger('usermention_completed.zulip', {mentioned: item});
         }
     } else if (this.completing === 'stream') {
@@ -501,13 +500,7 @@ exports.compose_content_matcher = function (item) {
     if (this.completing === 'emoji') {
         return query_matches_emoji(this.token, item);
     } else if (this.completing === 'mention') {
-        var matches;
-        if (user_groups.is_user_group(item)) {
-            matches = query_matches_user_group_or_stream(this.token, item);
-        } else {
-            matches = query_matches_person(this.token, item);
-        }
-        return matches;
+        return query_matches_person_or_user_group(this.token, item);
     } else if (this.completing === 'stream') {
         return query_matches_user_group_or_stream(this.token, item);
     } else if (this.completing === 'syntax') {
@@ -519,20 +512,7 @@ exports.compose_matches_sorter = function (matches) {
     if (this.completing === 'emoji') {
         return typeahead_helper.sort_emojis(matches, this.token);
     } else if (this.completing === 'mention') {
-        var users = [];
-        var groups = [];
-        _.each(matches, function (match) {
-            if (user_groups.is_user_group(match)) {
-                groups.push(match);
-            } else {
-                users.push(match);
-            }
-        });
-
-        var recipients = typeahead_helper.sort_recipients(users, this.token,
-                                                      compose_state.stream_name(),
-                                                      compose_state.subject(), groups);
-        return recipients;
+        return typeahead_helper.sort_people_and_user_groups(this.token, matches);
     } else if (this.completing === 'stream') {
         return typeahead_helper.sort_streams(matches, this.token);
     } else if (this.completing === 'syntax') {
@@ -609,13 +589,13 @@ exports.initialize = function () {
             // The matcher for "stream" is strictly prefix-based,
             // because we want to avoid mixing up streams.
             var q = this.query.trim().toLowerCase();
-            return (item.toLowerCase().indexOf(q) === 0);
+            return item.toLowerCase().indexOf(q) === 0;
         },
     });
 
     $("#subject").typeahead({
         source: function () {
-            var stream_name = $("#stream").val();
+            var stream_name = compose_state.stream_name();
             return exports.topics_seen_for(stream_name);
         },
         items: 3,
@@ -633,23 +613,44 @@ exports.initialize = function () {
     });
 
     $("#private_message_recipient").typeahead({
-        source: compose_pm_pill.get_typeahead_items,
+        source: function () {
+            var people = compose_pm_pill.get_typeahead_items();
+            var groups = user_groups.get_realm_user_groups();
+            return people.concat(groups);
+        },
         items: 5,
         dropup: true,
         fixed: true,
         highlighter: function (item) {
-            return typeahead_helper.render_person(item);
+            return typeahead_helper.render_person_or_user_group(item);
         },
         matcher: function (item) {
-            return query_matches_person(this.query, item);
+            return query_matches_person_or_user_group(this.query, item);
         },
         sorter: function (matches) {
-            // var current_stream = compose_state.stream_name();
-            return typeahead_helper.sort_recipientbox_typeahead(
-                this.query, matches, "");
+            return typeahead_helper.sort_people_and_user_groups(this.query, matches);
         },
         updater: function (item) {
-            compose_pm_pill.set_from_typeahead(item);
+            if (user_groups.is_user_group(item)) {
+                _.chain(item.members.keys())
+                    .map(function (user_id) {
+                        return people.get_person_from_user_id(user_id);
+                    }).filter(function (user) {
+                        // filter out inserted users and current user from pill insertion
+                        var inserted_users = user_pill.get_user_ids(compose_pm_pill.widget);
+                        var current_user = people.is_current_user(user.email);
+                        return inserted_users.indexOf(user.user_id) === -1 && !current_user;
+                    }).each(function (user) {
+                        compose_pm_pill.set_from_typeahead(user);
+                    });
+                // clear input pill in the event no pills were added
+                var pill_widget = compose_pm_pill.widget;
+                if (pill_widget.clear_text !== undefined) {
+                    pill_widget.clear_text();
+                }
+            } else {
+                compose_pm_pill.set_from_typeahead(item);
+            }
         },
         stopAdvance: true, // Do not advance to the next field on a tab or enter
     });
@@ -669,3 +670,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = composebox_typeahead;
 }
+window.composebox_typeahead = composebox_typeahead;

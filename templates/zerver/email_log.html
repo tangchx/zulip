@@ -26,7 +26,7 @@
                 <form id="smtp_form">
                     {{ csrf_input }}
                     <div class="alert alert-info"
-                        id="smtp_form_status" style="display:none;">
+                      id="smtp_form_status" style="display:none;">
                         Updated successfully.
                     </div>
                     <label for="forward">
@@ -59,7 +59,7 @@
             <button data-dismiss="modal">Close</button>
         </div>
     </div>
-    <script type="text/javascript">
+    <script>
     $('#toggle').change(function() {
         if($('.email-text').css('display') == 'none') {
             $(".email-text").each(function() {

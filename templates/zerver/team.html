@@ -5,16 +5,11 @@
 {% endblock %}
 
 {% block customhead %}
-{{ super() }}
-
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-{% stylesheet 'portico' %}
-{% stylesheet 'landing-page' %}
 <script>
     var contributors_list = {{ contrib|safe }};
 </script>
 {{ render_bundle('landing-page') }}
-
 {% endblock %}
 
 {% block portico_content %}
@@ -35,7 +30,7 @@
             <div class="team">
                 <h1>The core team at Kandra Labs</h1>
                 <p>
-                    Over 350 people have contributed to the Zulip
+                    Over 400 people have contributed to the Zulip
                     codebase, from high school students to 30 year
                     industry veterans, from people launching new careers
                     to people looking for community. Meet the leadership
@@ -104,7 +99,7 @@
                 </div>
                 <h3>Kandra Labs</h3>
                 <p>
-                    Kandra Labs provides commercial Zulip hosting and on-premise support
+                    Kandra Labs provides commercial Zulip hosting and on-premises support
                     at <a href="https://zulipchat.com/plans">https://zulipchat.com</a>,
                     and employs the core developers of the project. It was
                     started in June 2016 to help sustain the growth of the Zulip
@@ -130,38 +125,40 @@
                     team have made major contributions to the project.
                 </p>
 
-                <input id="total" type="radio" name="tabs" checked>
-                <label for="total"><i class="fa fa-globe" aria-hidden="true"></i>&nbsp; Total</label>
+                <div class="contributors-list">
+                    <input id="total" type="radio" name="tabs" checked>
+                    <label for="total"><i class="fa fa-globe" aria-hidden="true"></i>&nbsp; Total</label>
 
-                <input id="server" type="radio" name="tabs">
-                <label for="server"><i class="fa fa-server" aria-hidden="true"></i>&nbsp; Server</label>
+                    <input id="server" type="radio" name="tabs">
+                    <label for="server"><i class="fa fa-server" aria-hidden="true"></i>&nbsp; Server</label>
 
-                <input id="desktop" type="radio" name="tabs">
-                <label for="desktop"><i class="fa fa-desktop" aria-hidden="true"></i>&nbsp; Desktop</label>
+                    <input id="desktop" type="radio" name="tabs">
+                    <label for="desktop"><i class="fa fa-desktop" aria-hidden="true"></i>&nbsp; Desktop</label>
 
-                <input id="mobile" type="radio" name="tabs">
-                <label for="mobile"><i class="fa fa-mobile" aria-hidden="true"></i>&nbsp; Mobile</label>
+                    <input id="mobile" type="radio" name="tabs">
+                    <label for="mobile"><i class="fa fa-mobile" aria-hidden="true"></i>&nbsp; Mobile</label>
 
-                <input id="python-zulip-api" type="radio" name="tabs">
-                <label for="python-zulip-api"><i class="fa fa-code" aria-hidden="true"></i>&nbsp; Python API</label>
+                    <input id="python-zulip-api" type="radio" name="tabs">
+                    <label for="python-zulip-api"><i class="fa fa-code" aria-hidden="true"></i>&nbsp; Python API</label>
 
-                <input id="zulip-js" type="radio" name="tabs">
-                <label for="zulip-js"><i class="fa fa-code" aria-hidden="true"></i>&nbsp; JS API</label>
+                    <input id="zulip-js" type="radio" name="tabs">
+                    <label for="zulip-js"><i class="fa fa-code" aria-hidden="true"></i>&nbsp; JS API</label>
 
-                <input id="zulipbot" type="radio" name="tabs">
-                <label for="zulipbot"><i class="fa fa-at" aria-hidden="true"></i>&nbsp; Zulipbot</label>
+                    <input id="zulipbot" type="radio" name="tabs">
+                    <label for="zulipbot"><i class="fa fa-at" aria-hidden="true"></i>&nbsp; Zulipbot</label>
 
-                <input id="terminal" type="radio" name="tabs">
-                <label for="terminal"><i class="fa fa-terminal" aria-hidden="true"></i>&nbsp; Terminal</label>
+                    <input id="terminal" type="radio" name="tabs">
+                    <label for="terminal"><i class="fa fa-terminal" aria-hidden="true"></i>&nbsp; Terminal</label>
 
-                <div id="tab-total" class="contributors"></div>
-                <div id="tab-server" class="contributors"></div>
-                <div id="tab-desktop" class="contributors"></div>
-                <div id="tab-mobile" class="contributors"></div>
-                <div id="tab-python-zulip-api" class="contributors"></div>
-                <div id="tab-zulip-js" class="contributors"></div>
-                <div id="tab-zulipbot" class="contributors"></div>
-                <div id="tab-terminal" class="contributors"></div>
+                    <div id="tab-total" class="contributors"></div>
+                    <div id="tab-server" class="contributors"></div>
+                    <div id="tab-desktop" class="contributors"></div>
+                    <div id="tab-mobile" class="contributors"></div>
+                    <div id="tab-python-zulip-api" class="contributors"></div>
+                    <div id="tab-zulip-js" class="contributors"></div>
+                    <div id="tab-zulipbot" class="contributors"></div>
+                    <div id="tab-terminal" class="contributors"></div>
+                </div>
 
                 <!-- Compiled using underscore -->
                 <script type="text/template" id="contributors-template">
@@ -172,10 +169,16 @@
                             </div>
                             <div class='info'>
                                 <b>@<%= name %></b><br />
-                                <%= commits %> commits
+                                <%= commits %> <%= commits === 1 ? 'commit' : 'commits' %>
                             </div>
                         </a>
                     </div>
+                </script>
+
+                <script type="text/template" id="loading-template">
+                    <p class="tab-loading">
+                        Loading…
+                    </p>
                 </script>
 
                 <p class="last-updated">

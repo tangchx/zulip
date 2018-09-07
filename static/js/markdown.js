@@ -11,6 +11,17 @@ var exports = {};
 var realm_filter_map = {};
 var realm_filter_list = [];
 
+
+// Helper function
+function escape(html, encode) {
+    return html
+        .replace(!encode ? /&(?!#?\w+;)/g : /&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // Regexes that match some of our common bugdown markup
 var backend_only_markdown_re = [
     // Inline image previews, check for contiguous chars ending in image suffix
@@ -49,15 +60,27 @@ exports.apply_markdown = function (message) {
     var options = {
         userMentionHandler: function (name) {
             var person = people.get_by_name(name);
+
+            var id_regex = /(.+)\|(\d+)$/g; // For @**user|id** syntax
+            var match = id_regex.exec(name);
+            if (match) {
+                if (people.is_known_user_id(match[2])) {
+                    person = people.get_person_from_user_id(match[2]);
+                    if (person.full_name !== match[1]) { // Invalid Syntax
+                        return;
+                    }
+                }
+            }
+
             if (person !== undefined) {
                 if (people.is_my_user_id(person.user_id)) {
                     message.mentioned = true;
                     message.mentioned_me_directly = true;
                 }
                 return '<span class="user-mention" data-user-id="' + person.user_id + '">' +
-                       '@' + person.full_name +
+                       '@' + escape(person.full_name, true) +
                        '</span>';
-            } else if (name === 'all' || name === 'everyone') {
+            } else if (name === 'all' || name === 'everyone' || name === 'stream') {
                 message.mentioned = true;
                 return '<span class="user-mention" data-user-id="*">' +
                        '@' + name +
@@ -72,7 +95,7 @@ exports.apply_markdown = function (message) {
                     message.mentioned = true;
                 }
                 return '<span class="user-group-mention" data-user-group-id="' + group.id + '">' +
-                       '@' + group.name +
+                       '@' + escape(group.name, true) +
                        '</span>';
             }
             return;
@@ -111,20 +134,11 @@ exports.add_subject_links = function (message) {
 };
 
 exports.is_status_message = function (raw_content, content) {
-    return (raw_content.indexOf('/me ') === 0 &&
+    return raw_content.indexOf('/me ') === 0 &&
             raw_content.indexOf('\n') === -1 &&
             content.indexOf('<p>') === 0 &&
-            content.lastIndexOf('</p>') === content.length - 4);
+            content.lastIndexOf('</p>') === content.length - 4;
 };
-
-function escape(html, encode) {
-  return html
-    .replace(!encode ? /&(?!#?\w+;)/g : /&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 function handleUnicodeEmoji(unicode_emoji) {
     var codepoint = unicode_emoji.codePointAt(0).toString(16);
@@ -170,7 +184,7 @@ function handleStream(streamName) {
     var href = window.location.origin + '/#narrow/stream/' + hash_util.encode_stream_name(stream.name);
     return '<a class="stream" data-stream-id="' + stream.stream_id + '" ' +
         'href="' + href + '"' +
-        '>' + '#' + stream.name + '</a>';
+        '>' + '#' + escape(stream.name) + '</a>';
 
 }
 
@@ -325,9 +339,8 @@ exports.initialize = function () {
 
     function disable_markdown_regex(rules, name) {
         rules[name] = {exec: function () {
-                return false;
-            },
-        };
+            return false;
+        }};
     }
 
     // Configure the marked markdown parser for our usage
@@ -385,7 +398,7 @@ exports.initialize = function () {
 
     // Disable _emphasis_ (keeping *emphasis*)
     // Text inside ** must start and end with a word character
-    // it need for things like "const char *x = (char *)y"
+    // to prevent mis-parsing things like "char **x = (char **)y"
     marked.InlineLexer.rules.zulip.em = /^\*(?!\s+)((?:\*\*|[\s\S])+?)((?:[\S]))\*(?!\*)/;
 
     // Disable autolink as (a) it is not used in our backend and (b) it interferes with @mentions
@@ -431,3 +444,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = markdown;
 }
+window.markdown = markdown;

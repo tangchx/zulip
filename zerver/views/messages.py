@@ -1,4 +1,3 @@
-
 from django.utils.translation import ugettext as _
 from django.utils.timezone import now as timezone_now
 from django.conf import settings
@@ -6,7 +5,7 @@ from django.core import validators
 from django.core.exceptions import ValidationError
 from django.db import connection
 from django.http import HttpRequest, HttpResponse
-from typing import Dict, List, Set, Text, Any, Callable, Iterable, \
+from typing import Dict, List, Set, Any, Callable, Iterable, \
     Optional, Tuple, Union, Sequence
 from zerver.lib.exceptions import JsonableError, ErrorCode
 from zerver.lib.html_diff import highlight_html_differences
@@ -14,8 +13,9 @@ from zerver.decorator import has_request_variables, \
     REQ, to_non_negative_int
 from django.utils.html import escape as escape_html
 from zerver.lib import bugdown
+from zerver.lib.zcommand import process_zcommands
 from zerver.lib.actions import recipient_for_emails, do_update_message_flags, \
-    compute_mit_user_fullname, compute_irc_user_fullname, compute_jabber_user_fullname, \
+    compute_irc_user_fullname, compute_jabber_user_fullname, \
     create_mirror_user_if_needed, check_send_message, do_update_message, \
     extract_recipients, truncate_body, render_incoming_message, do_delete_message, \
     do_mark_all_as_read, do_mark_stream_messages_as_read, \
@@ -29,13 +29,14 @@ from zerver.lib.message import (
 )
 from zerver.lib.response import json_success, json_error
 from zerver.lib.sqlalchemy_utils import get_sqlalchemy_connection
-from zerver.lib.streams import access_stream_by_id, is_public_stream_by_name
+from zerver.lib.streams import access_stream_by_id, can_access_stream_history_by_name
 from zerver.lib.timestamp import datetime_to_timestamp, convert_to_UTC
 from zerver.lib.timezone import get_timezone
 from zerver.lib.topic_mutes import exclude_topic_mutes
 from zerver.lib.utils import statsd
 from zerver.lib.validator import \
     check_list, check_int, check_dict, check_string, check_bool
+from zerver.lib.zephyr import compute_mit_user_fullname
 from zerver.models import Message, UserProfile, Stream, Subscription, Client,\
     Realm, RealmDomain, Recipient, UserMessage, bulk_get_recipients, get_personal_recipient, \
     get_stream, email_to_domain, get_realm, get_active_streams, \
@@ -148,12 +149,7 @@ class NarrowBuilder:
 
     def by_is(self, query: Query, operand: str, maybe_negate: ConditionTransform) -> Query:
         if operand == 'private':
-            # The `.select_from` method extends the query with a join.
-            query = query.select_from(join(query.froms[0], table("zerver_recipient"),
-                                           column("recipient_id") ==
-                                           literal_column("zerver_recipient.id")))
-            cond = or_(column("type") == Recipient.PERSONAL,
-                       column("type") == Recipient.HUDDLE)
+            cond = column("flags").op("&")(UserMessage.flags.is_private.mask) != 0
             return query.where(maybe_negate(cond))
         elif operand == 'starred':
             cond = column("flags").op("&")(UserMessage.flags.starred.mask) != 0
@@ -174,7 +170,7 @@ class NarrowBuilder:
     _alphanum = frozenset(
         'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
 
-    def _pg_re_escape(self, pattern: Text) -> Text:
+    def _pg_re_escape(self, pattern: str) -> str:
         """
         Escape user input to place in a regex
 
@@ -357,14 +353,15 @@ class NarrowBuilder:
 
     def _by_search_pgroonga(self, query: Query, operand: str,
                             maybe_negate: ConditionTransform) -> Query:
-        match_positions_character = func.pgroonga.match_positions_character
-        query_extract_keywords = func.pgroonga.query_extract_keywords
-        keywords = query_extract_keywords(operand)
+        match_positions_character = func.pgroonga_match_positions_character
+        query_extract_keywords = func.pgroonga_query_extract_keywords
+        operand_escaped = func.escape_html(operand)
+        keywords = query_extract_keywords(operand_escaped)
         query = query.column(match_positions_character(column("rendered_content"),
                                                        keywords).label("content_matches"))
-        query = query.column(match_positions_character(column("subject"),
+        query = query.column(match_positions_character(func.escape_html(column("subject")),
                                                        keywords).label("subject_matches"))
-        condition = column("search_pgroonga").op("@@")(operand)
+        condition = column("search_pgroonga").op("&@~")(operand_escaped)
         return query.where(maybe_negate(condition))
 
     def _by_search_tsearch(self, query: Query, operand: str,
@@ -383,7 +380,7 @@ class NarrowBuilder:
         # search here so we can ignore punctuation and do
         # stemming, but there isn't a standard phrase search
         # mechanism in Postgres
-        for term in re.findall('"[^"]+"|\S+', operand):
+        for term in re.findall(r'"[^"]+"|\S+', operand):
             if term[0] == '"' and term[-1] == '"':
                 term = term[1:-1]
                 term = '%' + connection.ops.prep_for_like_query(term) + '%'
@@ -397,7 +394,7 @@ class NarrowBuilder:
 # The offsets we get from PGroonga are counted in characters
 # whereas the offsets from tsearch_extras are in bytes, so we
 # have to account for both cases in the logic below.
-def highlight_string(text: Text, locs: Iterable[Tuple[int, int]]) -> Text:
+def highlight_string(text: str, locs: Iterable[Tuple[int, int]]) -> str:
     highlight_start = '<span class="highlight">'
     highlight_stop = '</span>'
     pos = 0
@@ -446,8 +443,8 @@ def highlight_string(text: Text, locs: Iterable[Tuple[int, int]]) -> Text:
     result += final_frag
     return result
 
-def get_search_fields(rendered_content: Text, subject: Text, content_matches: Iterable[Tuple[int, int]],
-                      subject_matches: Iterable[Tuple[int, int]]) -> Dict[str, Text]:
+def get_search_fields(rendered_content: str, subject: str, content_matches: Iterable[Tuple[int, int]],
+                      subject_matches: Iterable[Tuple[int, int]]) -> Dict[str, str]:
     return dict(match_content=highlight_string(rendered_content, content_matches),
                 match_subject=highlight_string(escape_html(subject), subject_matches))
 
@@ -465,7 +462,7 @@ def narrow_parameter(json: str) -> Optional[List[Dict[str, Any]]]:
         # We have to support a legacy tuple format.
         if isinstance(elem, list):
             if (len(elem) != 2 or
-                any(not isinstance(x, str) and not isinstance(x, Text)
+                any(not isinstance(x, str) and not isinstance(x, str)
                     for x in elem)):
                 raise ValueError("element is not a string pair")
             return dict(operator=elem[0], operand=elem[1])
@@ -491,8 +488,7 @@ def narrow_parameter(json: str) -> Optional[List[Dict[str, Any]]]:
 
     return list(map(convert_term, data))
 
-def ok_to_include_history(narrow: Optional[Iterable[Dict[str, Any]]], realm: Realm) -> bool:
-
+def ok_to_include_history(narrow: Optional[Iterable[Dict[str, Any]]], user_profile: UserProfile) -> bool:
     # There are occasions where we need to find Message rows that
     # have no corresponding UserMessage row, because the user is
     # reading a public stream that might include messages that
@@ -507,7 +503,7 @@ def ok_to_include_history(narrow: Optional[Iterable[Dict[str, Any]]], realm: Rea
     if narrow is not None:
         for term in narrow:
             if term['operator'] == "stream" and not term.get('negated', False):
-                if is_public_stream_by_name(term['operand'], realm):
+                if can_access_stream_history_by_name(user_profile, term['operand']):
                     include_history = True
         # Disable historical messages if the user is narrowing on anything
         # that's a property on the UserMessage table.  There cannot be
@@ -518,7 +514,7 @@ def ok_to_include_history(narrow: Optional[Iterable[Dict[str, Any]]], realm: Rea
 
     return include_history
 
-def get_stream_name_from_narrow(narrow: Optional[Iterable[Dict[str, Any]]]) -> Optional[Text]:
+def get_stream_name_from_narrow(narrow: Optional[Iterable[Dict[str, Any]]]) -> Optional[str]:
     if narrow is not None:
         for term in narrow:
             if term['operator'] == 'stream':
@@ -558,9 +554,137 @@ def exclude_muting_conditions(user_profile: UserProfile,
 
     return conditions
 
+def get_base_query_for_search(user_profile: UserProfile,
+                              need_message: bool,
+                              need_user_message: bool) -> Tuple[Query, ColumnElement]:
+    if need_message and need_user_message:
+        query = select([column("message_id"), column("flags")],
+                       column("user_profile_id") == literal(user_profile.id),
+                       join(table("zerver_usermessage"), table("zerver_message"),
+                            literal_column("zerver_usermessage.message_id") ==
+                            literal_column("zerver_message.id")))
+        inner_msg_id_col = column("message_id")
+        return (query, inner_msg_id_col)
+
+    if need_user_message:
+        query = select([column("message_id"), column("flags")],
+                       column("user_profile_id") == literal(user_profile.id),
+                       table("zerver_usermessage"))
+        inner_msg_id_col = column("message_id")
+        return (query, inner_msg_id_col)
+
+    else:
+        assert(need_message)
+        query = select([column("id").label("message_id")],
+                       None,
+                       table("zerver_message"))
+        inner_msg_id_col = literal_column("zerver_message.id")
+        return (query, inner_msg_id_col)
+
+def add_narrow_conditions(user_profile: UserProfile,
+                          inner_msg_id_col: ColumnElement,
+                          query: Query,
+                          narrow: List[Dict[str, Any]]) -> Tuple[Query, bool]:
+    first_visible_message_id = get_first_visible_message_id(user_profile.realm)
+    if first_visible_message_id > 0:
+        query = query.where(inner_msg_id_col >= first_visible_message_id)
+
+    is_search = False  # for now
+
+    if narrow is None:
+        return (query, is_search)
+
+    # Build the query for the narrow
+    builder = NarrowBuilder(user_profile, inner_msg_id_col)
+    search_operands = []
+
+    # As we loop through terms, builder does most of the work to extend
+    # our query, but we need to collect the search operands and handle
+    # them after the loop.
+    for term in narrow:
+        if term['operator'] == 'search':
+            search_operands.append(term['operand'])
+        else:
+            query = builder.add_term(query, term)
+
+    if search_operands:
+        is_search = True
+        query = query.column(column("subject")).column(column("rendered_content"))
+        search_term = dict(
+            operator='search',
+            operand=' '.join(search_operands)
+        )
+        query = builder.add_term(query, search_term)
+
+    return (query, is_search)
+
+def find_first_unread_anchor(sa_conn: Any,
+                             user_profile: UserProfile,
+                             narrow: List[Dict[str, Any]]) -> int:
+    # We always need UserMessage in our query, because it has the unread
+    # flag for the user.
+    need_user_message = True
+
+    # Because we will need to call exclude_muting_conditions, unless
+    # the user hasn't muted anything, we will need to include Message
+    # in our query.  It may be worth eventually adding an optimization
+    # for the case of a user who hasn't muted anything to avoid the
+    # join in that case, but it's low priority.
+    need_message = True
+
+    query, inner_msg_id_col = get_base_query_for_search(
+        user_profile=user_profile,
+        need_message=need_message,
+        need_user_message=need_user_message,
+    )
+
+    query, is_search = add_narrow_conditions(
+        user_profile=user_profile,
+        inner_msg_id_col=inner_msg_id_col,
+        query=query,
+        narrow=narrow,
+    )
+
+    condition = column("flags").op("&")(UserMessage.flags.read.mask) == 0
+
+    # We exclude messages on muted topics when finding the first unread
+    # message in this narrow
+    muting_conditions = exclude_muting_conditions(user_profile, narrow)
+    if muting_conditions:
+        condition = and_(condition, *muting_conditions)
+
+    # The mobile app uses narrow=[] and use_first_unread_anchor=True to
+    # determine what messages to show when you first load the app.
+    # Unfortunately, this means that if you have a years-old unread
+    # message, the mobile app could get stuck in the past.
+    #
+    # To fix this, we enforce that the "first unread anchor" must be on or
+    # after the user's current pointer location. Since the pointer
+    # location refers to the latest the user has read in the home view,
+    # we'll only apply this logic in the home view (ie, when narrow is
+    # empty).
+    if not narrow:
+        pointer_condition = inner_msg_id_col >= user_profile.pointer
+        condition = and_(condition, pointer_condition)
+
+    first_unread_query = query.where(condition)
+    first_unread_query = first_unread_query.order_by(inner_msg_id_col.asc()).limit(1)
+    first_unread_result = list(sa_conn.execute(first_unread_query).fetchall())
+    if len(first_unread_result) > 0:
+        anchor = first_unread_result[0][0]
+    else:
+        anchor = LARGER_THAN_MAX_MESSAGE_ID
+
+    return anchor
+
+@has_request_variables
+def zcommand_backend(request: HttpRequest, user_profile: UserProfile,
+                     command: str=REQ('command')) -> HttpResponse:
+    return json_success(process_zcommands(command, user_profile))
+
 @has_request_variables
 def get_messages_backend(request: HttpRequest, user_profile: UserProfile,
-                         anchor: int=REQ(converter=int),
+                         anchor: int=REQ(converter=int, default=None),
                          num_before: int=REQ(converter=to_non_negative_int),
                          num_after: int=REQ(converter=to_non_negative_int),
                          narrow: Optional[List[Dict[str, Any]]]=REQ('narrow', converter=narrow_parameter,
@@ -568,38 +692,40 @@ def get_messages_backend(request: HttpRequest, user_profile: UserProfile,
                          use_first_unread_anchor: bool=REQ(validator=check_bool, default=False),
                          client_gravatar: bool=REQ(validator=check_bool, default=False),
                          apply_markdown: bool=REQ(validator=check_bool, default=True)) -> HttpResponse:
-    include_history = ok_to_include_history(narrow, user_profile.realm)
+    if anchor is None and not use_first_unread_anchor:
+        return json_error(_("Missing 'anchor' argument (or set 'use_first_unread_anchor'=True)."))
+    include_history = ok_to_include_history(narrow, user_profile)
 
-    if include_history and not use_first_unread_anchor:
+    if include_history:
         # The initial query in this case doesn't use `zerver_usermessage`,
         # and isn't yet limited to messages the user is entitled to see!
         #
         # This is OK only because we've made sure this is a narrow that
         # will cause us to limit the query appropriately later.
         # See `ok_to_include_history` for details.
-        query = select([column("id").label("message_id")], None, table("zerver_message"))
-        inner_msg_id_col = literal_column("zerver_message.id")
-    elif narrow is None and not use_first_unread_anchor:
-        # This is limited to messages the user received, as recorded in `zerver_usermessage`.
-        query = select([column("message_id"), column("flags")],
-                       column("user_profile_id") == literal(user_profile.id),
-                       table("zerver_usermessage"))
-        inner_msg_id_col = column("message_id")
+        need_message = True
+        need_user_message = False
+    elif narrow is None:
+        # We need to limit to messages the user has received, but we don't actually
+        # need any fields from Message
+        need_message = False
+        need_user_message = True
     else:
-        # This is limited to messages the user received, as recorded in `zerver_usermessage`.
-        # TODO: Don't do this join if we're not doing a search
-        query = select([column("message_id"), column("flags")],
-                       column("user_profile_id") == literal(user_profile.id),
-                       join(table("zerver_usermessage"), table("zerver_message"),
-                            literal_column("zerver_usermessage.message_id") ==
-                            literal_column("zerver_message.id")))
-        inner_msg_id_col = column("message_id")
+        need_message = True
+        need_user_message = True
 
-    first_visible_message_id = get_first_visible_message_id(user_profile.realm)
-    if first_visible_message_id > 0:
-        query = query.where(inner_msg_id_col >= first_visible_message_id)
+    query, inner_msg_id_col = get_base_query_for_search(
+        user_profile=user_profile,
+        need_message=need_message,
+        need_user_message=need_user_message,
+    )
 
-    is_search = False
+    query, is_search = add_narrow_conditions(
+        user_profile=user_profile,
+        inner_msg_id_col=inner_msg_id_col,
+        query=query,
+        narrow=narrow,
+    )
 
     if narrow is not None:
         # Add some metadata to our logging data for narrows
@@ -611,67 +737,22 @@ def get_messages_backend(request: HttpRequest, user_profile: UserProfile,
                 verbose_operators.append(term['operator'])
         request._log_data['extra'] = "[%s]" % (",".join(verbose_operators),)
 
-        # Build the query for the narrow
-        builder = NarrowBuilder(user_profile, inner_msg_id_col)
-        search_term = {}  # type: Dict[str, Any]
-        for term in narrow:
-            if term['operator'] == 'search':
-                if not is_search:
-                    search_term = term
-                    query = query.column(column("subject")).column(column("rendered_content"))
-                    is_search = True
-                else:
-                    # Join the search operators if there are multiple of them
-                    search_term['operand'] += ' ' + term['operand']
-            else:
-                query = builder.add_term(query, term)
-        if is_search:
-            query = builder.add_term(query, search_term)
-
     sa_conn = get_sqlalchemy_connection()
 
-    anchored_to_right = False  # till we know better
-
     if use_first_unread_anchor:
-        condition = column("flags").op("&")(UserMessage.flags.read.mask) == 0
-
-        # We exclude messages on muted topics when finding the first unread
-        # message in this narrow
-        muting_conditions = exclude_muting_conditions(user_profile, narrow)
-        if muting_conditions:
-            condition = and_(condition, *muting_conditions)
-
-        # The mobile app uses narrow=[] and use_first_unread_anchor=True to
-        # determine what messages to show when you first load the app.
-        # Unfortunately, this means that if you have a years-old unread
-        # message, the mobile app could get stuck in the past.
-        #
-        # To fix this, we enforce that the "first unread anchor" must be on or
-        # after the user's current pointer location. Since the pointer
-        # location refers to the latest the user has read in the home view,
-        # we'll only apply this logic in the home view (ie, when narrow is
-        # empty).
-        if not narrow:
-            pointer_condition = inner_msg_id_col >= user_profile.pointer
-            condition = and_(condition, pointer_condition)
-
-        first_unread_query = query.where(condition)
-        first_unread_query = first_unread_query.order_by(inner_msg_id_col.asc()).limit(1)
-        first_unread_result = list(sa_conn.execute(first_unread_query).fetchall())
-        if len(first_unread_result) > 0:
-            anchor = first_unread_result[0][0]
-        else:
-            # Set values that will be used to short circuit the after_query
-            # altogether and avoid needless conditions in the before_query.
-            anchored_to_right = True
-            num_after = None
-
-            # We only use LARGER_THAN_MAX_MESSAGE_ID for an edge case hack
-            # where num_before and num_after are 0, and it produces a query
-            # that returns zero results.
-            anchor = LARGER_THAN_MAX_MESSAGE_ID
+        anchor = find_first_unread_anchor(
+            sa_conn,
+            user_profile,
+            narrow,
+        )
 
     anchored_to_left = (anchor == 0)
+
+    # Set values that will be used to short circuit the after_query
+    # altogether and avoid needless conditions in the before_query.
+    anchored_to_right = (anchor == LARGER_THAN_MAX_MESSAGE_ID)
+    if anchored_to_right:
+        num_after = None
 
     query = limit_query_to_range(
         query=query,
@@ -727,7 +808,7 @@ def get_messages_backend(request: HttpRequest, user_profile: UserProfile,
             user_message_flags[message_id] = UserMessage.flags_list_for_flags(flags)
             message_ids.append(message_id)
 
-    search_fields = dict()  # type: Dict[int, Dict[str, Text]]
+    search_fields = dict()  # type: Dict[int, Dict[str, str]]
     if is_search:
         for row in rows:
             message_id = row[0]
@@ -740,7 +821,7 @@ def get_messages_backend(request: HttpRequest, user_profile: UserProfile,
                 # No coverage for this block since it should be
                 # impossible, and we plan to remove it once we've
                 # debugged the case that makes it happen.
-                raise Exception(str(err), message_id, search_term)
+                raise Exception(str(err), message_id, narrow)
 
     message_list = messages_for_ids(
         message_ids=message_ids,
@@ -889,9 +970,9 @@ def post_process_limited_query(rows: List[Any],
 @has_request_variables
 def update_message_flags(request: HttpRequest, user_profile: UserProfile,
                          messages: List[int]=REQ(validator=check_list(check_int)),
-                         operation: Text=REQ('op'), flag: Text=REQ()) -> HttpResponse:
+                         operation: str=REQ('op'), flag: str=REQ()) -> HttpResponse:
 
-    count = do_update_message_flags(user_profile, operation, flag, messages)
+    count = do_update_message_flags(user_profile, request.client, operation, flag, messages)
 
     target_count_str = str(len(messages))
     log_data_str = "[%s %s/%s] actually %s" % (operation, flag, target_count_str, count)
@@ -903,7 +984,7 @@ def update_message_flags(request: HttpRequest, user_profile: UserProfile,
 
 @has_request_variables
 def mark_all_as_read(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:
-    count = do_mark_all_as_read(user_profile)
+    count = do_mark_all_as_read(user_profile, request.client)
 
     log_data_str = "[%s updated]" % (count,)
     request._log_data["extra"] = log_data_str
@@ -916,7 +997,7 @@ def mark_stream_as_read(request: HttpRequest,
                         user_profile: UserProfile,
                         stream_id: int=REQ(validator=check_int)) -> HttpResponse:
     stream, recipient, sub = access_stream_by_id(user_profile, stream_id)
-    count = do_mark_stream_messages_as_read(user_profile, stream)
+    count = do_mark_stream_messages_as_read(user_profile, request.client, stream)
 
     log_data_str = "[%s updated]" % (count,)
     request._log_data["extra"] = log_data_str
@@ -928,7 +1009,7 @@ def mark_stream_as_read(request: HttpRequest,
 def mark_topic_as_read(request: HttpRequest,
                        user_profile: UserProfile,
                        stream_id: int=REQ(validator=check_int),
-                       topic_name: Text=REQ()) -> HttpResponse:
+                       topic_name: str=REQ()) -> HttpResponse:
     stream, recipient, sub = access_stream_by_id(user_profile, stream_id)
 
     if topic_name:
@@ -938,7 +1019,7 @@ def mark_topic_as_read(request: HttpRequest,
         if not topic_exists:
             raise JsonableError(_('No such topic \'%s\'') % (topic_name,))
 
-    count = do_mark_stream_messages_as_read(user_profile, stream, topic_name)
+    count = do_mark_stream_messages_as_read(user_profile, request.client, stream, topic_name)
 
     log_data_str = "[%s updated]" % (count,)
     request._log_data["extra"] = log_data_str
@@ -947,7 +1028,7 @@ def mark_topic_as_read(request: HttpRequest,
                          'msg': ''})
 
 def create_mirrored_message_users(request: HttpRequest, user_profile: UserProfile,
-                                  recipients: Iterable[Text]) -> Tuple[bool, Optional[UserProfile]]:
+                                  recipients: Iterable[str]) -> Tuple[bool, Optional[UserProfile]]:
     if "sender" not in request.POST:
         return (False, None)
 
@@ -982,7 +1063,7 @@ def create_mirrored_message_users(request: HttpRequest, user_profile: UserProfil
     sender = get_user_including_cross_realm(sender_email, user_profile.realm)
     return (True, sender)
 
-def same_realm_zephyr_user(user_profile: UserProfile, email: Text) -> bool:
+def same_realm_zephyr_user(user_profile: UserProfile, email: str) -> bool:
     #
     # Are the sender and recipient both addresses in the same Zephyr
     # mirroring realm?  We have to handle this specially, inferring
@@ -1001,7 +1082,7 @@ def same_realm_zephyr_user(user_profile: UserProfile, email: Text) -> bool:
     return user_profile.realm.is_zephyr_mirror_realm and \
         RealmDomain.objects.filter(realm=user_profile.realm, domain=domain).exists()
 
-def same_realm_irc_user(user_profile: UserProfile, email: Text) -> bool:
+def same_realm_irc_user(user_profile: UserProfile, email: str) -> bool:
     # Check whether the target email address is an IRC user in the
     # same realm as user_profile, i.e. if the domain were example.com,
     # the IRC user would need to be username@irc.example.com
@@ -1016,7 +1097,7 @@ def same_realm_irc_user(user_profile: UserProfile, email: Text) -> bool:
     # these realms.
     return RealmDomain.objects.filter(realm=user_profile.realm, domain=domain).exists()
 
-def same_realm_jabber_user(user_profile: UserProfile, email: Text) -> bool:
+def same_realm_jabber_user(user_profile: UserProfile, email: str) -> bool:
     try:
         validators.validate_email(email)
     except ValidationError:
@@ -1031,10 +1112,10 @@ def same_realm_jabber_user(user_profile: UserProfile, email: Text) -> bool:
     return RealmDomain.objects.filter(realm=user_profile.realm, domain=domain).exists()
 
 def handle_deferred_message(sender: UserProfile, client: Client,
-                            message_type_name: Text, message_to: Sequence[Text],
-                            topic_name: Optional[Text],
-                            message_content: Text, delivery_type: Text,
-                            defer_until: Text, tz_guess: Text,
+                            message_type_name: str, message_to: Sequence[str],
+                            topic_name: Optional[str],
+                            message_content: str, delivery_type: str,
+                            defer_until: str, tz_guess: str,
                             forwarder_user_profile: UserProfile,
                             realm: Optional[Realm]) -> HttpResponse:
     deliver_at = None
@@ -1046,7 +1127,7 @@ def handle_deferred_message(sender: UserProfile, client: Client,
     try:
         deliver_at = dateparser(defer_until)
     except ValueError:
-        return json_error(_("Invalid timestamp for scheduling message."))
+        return json_error(_("Invalid time format"))
 
     deliver_at_usertz = deliver_at
     if deliver_at_usertz.tzinfo is None:
@@ -1056,7 +1137,7 @@ def handle_deferred_message(sender: UserProfile, client: Client,
     deliver_at = convert_to_UTC(deliver_at_usertz)
 
     if deliver_at <= timezone_now():
-        return json_error(_("Invalid timestamp for scheduling message. Choose a time in future."))
+        return json_error(_("Time must be in the future."))
 
     check_schedule_message(sender, client, message_type_name, message_to,
                            topic_name, message_content, delivery_type,
@@ -1070,18 +1151,19 @@ def handle_deferred_message(sender: UserProfile, client: Client,
 # the user is logged in.
 @has_request_variables
 def send_message_backend(request: HttpRequest, user_profile: UserProfile,
-                         message_type_name: Text=REQ('type'),
-                         message_to: List[Text]=REQ('to', converter=extract_recipients, default=[]),
+                         message_type_name: str=REQ('type'),
+                         message_to: List[str]=REQ('to', converter=extract_recipients, default=[]),
                          forged: bool=REQ(default=False),
-                         topic_name: Optional[Text]= REQ('subject',
-                                                         converter=lambda x: x.strip(), default=None),
-                         message_content: Text=REQ('content'),
-                         realm_str: Optional[Text]=REQ('realm_str', default=None),
-                         local_id: Optional[Text]=REQ(default=None),
-                         queue_id: Optional[Text]=REQ(default=None),
-                         delivery_type: Optional[Text]=REQ('delivery_type', default='send_now'),
-                         defer_until: Optional[Text]=REQ('deliver_at', default=None),
-                         tz_guess: Optional[Text]=REQ('tz_guess', default=None)) -> HttpResponse:
+                         topic_name: Optional[str]=REQ('subject',
+                                                       converter=lambda x: x.strip(), default=None),
+                         message_content: str=REQ('content'),
+                         widget_content: Optional[str]=REQ(default=None),
+                         realm_str: Optional[str]=REQ('realm_str', default=None),
+                         local_id: Optional[str]=REQ(default=None),
+                         queue_id: Optional[str]=REQ(default=None),
+                         delivery_type: Optional[str]=REQ('delivery_type', default='send_now'),
+                         defer_until: Optional[str]=REQ('deliver_at', default=None),
+                         tz_guess: Optional[str]=REQ('tz_guess', default=None)) -> HttpResponse:
     client = request.client
     is_super_user = request.user.is_api_super_user
     if forged and not is_super_user:
@@ -1140,7 +1222,8 @@ def send_message_backend(request: HttpRequest, user_profile: UserProfile,
                              topic_name, message_content, forged=forged,
                              forged_timestamp = request.POST.get('time'),
                              forwarder_user_profile=user_profile, realm=realm,
-                             local_id=local_id, sender_queue_id=queue_id)
+                             local_id=local_id, sender_queue_id=queue_id,
+                             widget_content=widget_content)
     return json_success({"id": ret})
 
 def fill_edit_history_entries(message_history: List[Dict[str, Any]], message: Message) -> None:
@@ -1155,7 +1238,12 @@ def fill_edit_history_entries(message_history: List[Dict[str, Any]], message: Me
     prev_content = message.content
     prev_rendered_content = message.rendered_content
     prev_topic = message.subject
-    assert(datetime_to_timestamp(message.last_edit_time) == message_history[0]['timestamp'])
+
+    # Make sure that the latest entry in the history corresponds to the
+    # message's last edit time
+    if len(message_history) > 0:
+        assert(datetime_to_timestamp(message.last_edit_time) ==
+               message_history[0]['timestamp'])
 
     for entry in message_history:
         entry['topic'] = prev_topic
@@ -1192,7 +1280,10 @@ def get_message_edit_history(request: HttpRequest, user_profile: UserProfile,
     message, ignored_user_message = access_message(user_profile, message_id)
 
     # Extract the message edit history from the message
-    message_edit_history = ujson.loads(message.edit_history)
+    if message.edit_history is not None:
+        message_edit_history = ujson.loads(message.edit_history)
+    else:
+        message_edit_history = []
 
     # Fill in all the extra data that will make it usable
     fill_edit_history_entries(message_edit_history, message)
@@ -1201,13 +1292,14 @@ def get_message_edit_history(request: HttpRequest, user_profile: UserProfile,
 @has_request_variables
 def update_message_backend(request: HttpRequest, user_profile: UserMessage,
                            message_id: int=REQ(converter=to_non_negative_int),
-                           subject: Optional[Text]=REQ(default=None),
+                           subject: Optional[str]=REQ(default=None),
                            propagate_mode: Optional[str]=REQ(default="change_one"),
-                           content: Optional[Text]=REQ(default=None)) -> HttpResponse:
+                           content: Optional[str]=REQ(default=None)) -> HttpResponse:
     if not user_profile.realm.allow_message_editing:
         return json_error(_("Your organization has turned off message editing"))
 
     message, ignored_user_message = access_message(user_profile, message_id)
+    is_no_topic_msg = (message.topic_name() == "(no topic)")
 
     # You only have permission to edit a message if:
     # you change this value also change those two parameters in message_edit.js.
@@ -1217,7 +1309,7 @@ def update_message_backend(request: HttpRequest, user_profile: UserMessage,
     # 4. This is a topic-only edit and your realm allows users to edit topics.
     if message.sender == user_profile:
         pass
-    elif (content is None) and ((message.topic_name() == "(no topic)") or
+    elif (content is None) and (is_no_topic_msg or
                                 user_profile.is_realm_admin or
                                 user_profile.realm.allow_community_topic_editing):
         pass
@@ -1233,16 +1325,17 @@ def update_message_backend(request: HttpRequest, user_profile: UserMessage,
     if content is not None and user_profile.realm.message_content_edit_limit_seconds > 0:
         deadline_seconds = user_profile.realm.message_content_edit_limit_seconds + edit_limit_buffer
         if (timezone_now() - message.pub_date) > datetime.timedelta(seconds=deadline_seconds):
-            raise JsonableError(_("The time limit for editing this message has past"))
+            raise JsonableError(_("The time limit for editing this message has passed"))
 
     # If there is a change to the topic, check that the user is allowed to
     # edit it and that it has not been too long. If this is not the user who
     # sent the message, they are not the admin, and the time limit for editing
     # topics is passed, raise an error.
-    if content is None and message.sender != user_profile and not user_profile.is_realm_admin:
+    if content is None and message.sender != user_profile and not user_profile.is_realm_admin and \
+            not is_no_topic_msg:
         deadline_seconds = Realm.DEFAULT_COMMUNITY_TOPIC_EDITING_LIMIT_SECONDS + edit_limit_buffer
         if (timezone_now() - message.pub_date) > datetime.timedelta(seconds=deadline_seconds):
-            raise JsonableError(_("The time limit for editing this message has past"))
+            raise JsonableError(_("The time limit for editing this message has passed"))
 
     if subject is None and content is None:
         return json_error(_("Nothing to change"))
@@ -1251,7 +1344,7 @@ def update_message_backend(request: HttpRequest, user_profile: UserMessage,
         if subject == "":
             raise JsonableError(_("Topic can't be empty"))
     rendered_content = None
-    links_for_embed = set()  # type: Set[Text]
+    links_for_embed = set()  # type: Set[str]
     prior_mention_user_ids = set()  # type: Set[int]
     mention_user_ids = set()  # type: Set[int]
     if content is not None:
@@ -1295,14 +1388,31 @@ def update_message_backend(request: HttpRequest, user_profile: UserMessage,
     return json_success()
 
 
+def validate_can_delete_message(user_profile: UserProfile, message: Message) -> None:
+    if user_profile.is_realm_admin:
+        # Admin can delete any message, any time.
+        return
+    if message.sender != user_profile:
+        # Users can only delete messages sent by them.
+        raise JsonableError(_("You don't have permission to delete this message"))
+    if not user_profile.realm.allow_message_deleting:
+        # User can not delete message, if message deleting is not allowed in realm.
+        raise JsonableError(_("You don't have permission to delete this message"))
+
+    deadline_seconds = user_profile.realm.message_content_delete_limit_seconds
+    if deadline_seconds == 0:
+        # 0 for no time limit to delete message
+        return
+    if (timezone_now() - message.pub_date) > datetime.timedelta(seconds=deadline_seconds):
+        # User can not delete message after deadline time of realm
+        raise JsonableError(_("The time limit for deleting this message has passed"))
+    return
+
 @has_request_variables
 def delete_message_backend(request: HttpRequest, user_profile: UserProfile,
                            message_id: int=REQ(converter=to_non_negative_int)) -> HttpResponse:
     message, ignored_user_message = access_message(user_profile, message_id)
-    is_user_allowed_to_delete_message = user_profile.is_realm_admin or \
-        (message.sender == user_profile and user_profile.realm.allow_message_deleting)
-    if not is_user_allowed_to_delete_message:
-        raise JsonableError(_("You don't have permission to edit this message"))
+    validate_can_delete_message(user_profile, message)
     do_delete_message(user_profile, message)
     return json_success()
 
@@ -1314,7 +1424,7 @@ def json_fetch_raw_message(request: HttpRequest, user_profile: UserProfile,
 
 @has_request_variables
 def render_message_backend(request: HttpRequest, user_profile: UserProfile,
-                           content: Text=REQ()) -> HttpResponse:
+                           content: str=REQ()) -> HttpResponse:
     message = Message()
     message.sender = user_profile
     message.content = content

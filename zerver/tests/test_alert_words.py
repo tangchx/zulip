@@ -21,8 +21,6 @@ from zerver.models import (
     UserProfile,
 )
 
-from typing import Text
-
 import ujson
 
 class AlertWordTests(ZulipTestCase):
@@ -107,13 +105,19 @@ class AlertWordTests(ZulipTestCase):
         self.assert_json_success(result)
         self.assertEqual(result.json()['alert_words'], [])
 
+    def test_json_list_nonempty(self) -> None:
+        hamlet = self.example_user('hamlet')
+        add_user_alert_words(hamlet, ['one', 'two', 'three'])
+
+        self.login(self.example_email('hamlet'))
+        result = self.client_get('/json/users/me/alert_words')
+        self.assert_json_success(result)
+        self.assertEqual(result.json()['alert_words'], ['one', 'two', 'three'])
+
     def test_json_list_add(self) -> None:
         self.login(self.example_email("hamlet"))
 
         result = self.client_post('/json/users/me/alert_words', {'alert_words': ujson.dumps(['one ', '\n two', 'three'])})
-        self.assert_json_success(result)
-
-        result = self.client_get('/json/users/me/alert_words')
         self.assert_json_success(result)
         self.assertEqual(result.json()['alert_words'], ['one', 'two', 'three'])
 
@@ -122,15 +126,13 @@ class AlertWordTests(ZulipTestCase):
 
         result = self.client_post('/json/users/me/alert_words', {'alert_words': ujson.dumps(['one', 'two', 'three'])})
         self.assert_json_success(result)
+        self.assertEqual(result.json()['alert_words'], ['one', 'two', 'three'])
 
         result = self.client_delete('/json/users/me/alert_words', {'alert_words': ujson.dumps(['one'])})
         self.assert_json_success(result)
-
-        result = self.client_get('/json/users/me/alert_words')
-        self.assert_json_success(result)
         self.assertEqual(result.json()['alert_words'], ['two', 'three'])
 
-    def message_does_alert(self, user_profile: UserProfile, message: Text) -> bool:
+    def message_does_alert(self, user_profile: UserProfile, message: str) -> bool:
         """Send a bunch of messages as othello, so Hamlet is notified"""
         self.send_stream_message(self.example_email("othello"), "Denmark", message)
         user_message = most_recent_usermessage(user_profile)
@@ -141,9 +143,6 @@ class AlertWordTests(ZulipTestCase):
         user_profile_hamlet = self.example_user('hamlet')
 
         result = self.client_post('/json/users/me/alert_words', {'alert_words': ujson.dumps(['one', 'two', 'three'])})
-        self.assert_json_success(result)
-
-        result = self.client_get('/json/users/me/alert_words')
         self.assert_json_success(result)
         self.assertEqual(result.json()['alert_words'], ['one', 'two', 'three'])
 

@@ -1,4 +1,4 @@
-const ELECTRON_APP_VERSION = "1.9.0";
+const ELECTRON_APP_VERSION = "2.3.6";
 const ELECTRON_APP_URL_LINUX = "https://github.com/zulip/zulip-electron/releases/download/v" + ELECTRON_APP_VERSION + "/Zulip-" + ELECTRON_APP_VERSION + "-x86_64.AppImage";
 const ELECTRON_APP_URL_MAC = "https://github.com/zulip/zulip-electron/releases/download/v" + ELECTRON_APP_VERSION + "/Zulip-" + ELECTRON_APP_VERSION + ".dmg";
 const ELECTRON_APP_URL_WINDOWS = "https://github.com/zulip/zulip-electron/releases/download/v" + ELECTRON_APP_VERSION + "/Zulip-Web-Setup-" + ELECTRON_APP_VERSION + ".exe";
@@ -16,8 +16,8 @@ var ScrollTo = function () {
         // then use that as the scrollTop, else assume it is a selector name
         // and find the `offsetTop`.
         var top = /\dpx/.test(sel) ?
-                parseInt(sel, 10) :
-                $("[name='" + sel + "']").offset().top;
+            parseInt(sel, 10) :
+            $("[name='" + sel + "']").offset().top;
 
         $("body").animate({ scrollTop: top + "px" }, 300);
     });
@@ -88,16 +88,16 @@ var apps_events = function () {
             return "android";
         }
         if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-             return "ios";
+            return "ios";
         }
         if (/Mac/i.test(navigator.userAgent)) {
-             return "mac";
+            return "mac";
         }
         if (/Win/i.test(navigator.userAgent)) {
-             return "windows";
+            return "windows";
         }
         if (/Linux/i.test(navigator.userAgent)) {
-             return "linux";
+            return "linux";
         }
         return "mac"; // if unable to determine OS return Mac by default
     }
@@ -107,7 +107,7 @@ var apps_events = function () {
         var parts = path_parts();
 
         Object.keys(info).forEach(function (version) {
-            if (parts.includes(version)) {
+            if (parts.indexOf(version) !== -1) {
                 result = version;
             }
         });
@@ -127,6 +127,7 @@ var apps_events = function () {
 
     var update_page = function () {
         var $download_instructions = $(".download-instructions");
+        var $third_party_apps = $("#third-party-apps");
         var version_info = info[version];
 
         $(".info .platform").text(version_info.alt);
@@ -140,6 +141,13 @@ var apps_events = function () {
         } else {
             $download_instructions.hide();
         }
+
+        if (version === "mac" || version === "windows" || version === "linux") {
+            $third_party_apps.show();
+        } else {
+            $third_party_apps.hide();
+        }
+
     };
 
     $(window).on('popstate', function () {
@@ -184,7 +192,7 @@ var events = function () {
         if (window.location.pathname !== this.pathname && !this.hasAttribute("download") &&
             !/no-action/.test(this.className)) {
             e.preventDefault();
-            $(".portico-landing").removeClass("show");
+
             setTimeout(function () {
                 window.location.href = $(this).attr("href");
             }.bind(this), 500);
@@ -196,7 +204,7 @@ var events = function () {
     // pop the last element to get the current section (eg. `features`).
     var location = window.location.pathname.replace(/\/#*$/, "").split(/\//).pop();
 
-    $("[on-page='" + location + "']").addClass("active");
+    $("[data-on-page='" + location + "']").addClass("active");
 
     $("body").click(function (e) {
         var $e = $(e.target);
@@ -215,11 +223,11 @@ var events = function () {
         e.stopPropagation();
     });
 
-    if (path_parts().includes("apps")) {
+    if (path_parts().indexOf("apps") !== -1) {
         apps_events();
     }
 
-    if (path_parts().includes('hello')) {
+    if (path_parts().indexOf('hello') !== -1) {
         hello_events();
     }
 };
@@ -227,16 +235,41 @@ var events = function () {
 
 // run this callback when the page is determined to have loaded.
 var load = function () {
-    // show the .portico-landing when the document is loaded.
-    setTimeout(function () {
-        $(".portico-landing").addClass("show");
-    }, 200);
 
-    // display the `x-grad` element a second after load so that the slide up
-    // transition on the .portico-landing is nice and smooth.
-    setTimeout(function () {
-        $("x-grad").addClass("show");
-    }, 1000);
+    // Initiate the bootstrap carousel logic
+    $('.carousel').carousel({
+        interval: false,
+    });
+
+    // Move to the next slide on clicking inside the carousel container
+    $(".carousel-inner .item-container").click(function (e) {
+        var get_tag_name = e.target.tagName.toLowerCase();
+        var is_button = get_tag_name === "button";
+        var is_link = get_tag_name === "a";
+        var is_last_slide = $("#tour-carousel .carousel-inner .item:last-child").hasClass("active");
+
+        // Do not trigger this event if user clicks on a button, link
+        // or if it's the last slide
+        var move_slide_forward = !is_button && !is_link && !is_last_slide;
+
+        if (move_slide_forward) {
+            $(this).closest('.carousel').carousel('next');
+        }
+    });
+
+    $(".carousel-link-button").click(function () {
+        window.location.href = $(this).attr("href");
+    });
+
+    $('.carousel').on('slid', function () {
+        var $this = $(this);
+        $this.find('.visibility-control').show();
+        if ($this.find('.carousel-inner .item:first').hasClass('active')) {
+            $this.find('.left.visibility-control').hide();
+        } else if ($this.find('.carousel-inner .item:last').hasClass('active')) {
+            $this.find('.right.visibility-control').hide();
+        }
+    });
 
     // Set up events / categories / search
     events();

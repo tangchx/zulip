@@ -21,19 +21,27 @@ function populate_invites(invites_data) {
     }
     var invites_table = $("#admin_invites_table").expectOne();
 
-    list_render(invites_table, invites_data.invites, {
-        name: "admin_invites_list",
-        modifier: function (item) {
-            item.invited = timerender.absolute_time(item.invited * 1000);
-            return templates.render("admin_invites_list", { invite: item });
-        },
-        filter: {
-            element: invites_table.closest(".settings-section").find(".search"),
-            callback: function (item, value) {
-                return item.email.toLowerCase().indexOf(value) >= 0;
+    var admin_invites_list = list_render.get("admin_invites_list");
+
+    if (admin_invites_list) {
+        admin_invites_list.data(invites_data.invites);
+        admin_invites_list.set_container(invites_table);
+        admin_invites_list.render();
+    } else {
+        list_render.create(invites_table, invites_data.invites, {
+            name: "admin_invites_list",
+            modifier: function (item) {
+                item.invited = timerender.absolute_time(item.invited * 1000);
+                return templates.render("admin_invites_list", { invite: item });
             },
-        },
-    }).init();
+            filter: {
+                element: invites_table.closest(".settings-section").find(".search"),
+                callback: function (item, value) {
+                    return item.email.toLowerCase().indexOf(value) >= 0;
+                },
+            },
+        }).init();
+    }
 
     loading.destroy_indicator($('#admin_page_invites_loading_indicator'));
 }
@@ -49,7 +57,7 @@ exports.set_up = function () {
     channel.get({
         url: '/json/invites',
         idempotent: true,
-        timeout:  10*1000,
+        timeout:  10 * 1000,
         success: exports.on_load_success,
         error: failed_listing_invites,
     });
@@ -60,6 +68,8 @@ exports.on_load_success = function (invites_data) {
     populate_invites(invites_data);
 
     $(".admin_invites_table").on("click", ".revoke", function (e) {
+        // This click event must not get propagated to parent container otherwise the modal
+        // will not show up because of a call to `close_active_modal` in `settings.js`.
         e.preventDefault();
         e.stopPropagation();
 
@@ -74,6 +84,8 @@ exports.on_load_success = function (invites_data) {
     });
 
     $(".admin_invites_table").on("click", ".resend", function (e) {
+        // This click event must not get propagated to parent container otherwise the modal
+        // will not show up because of a call to `close_active_modal` in `settings.js`.
         e.preventDefault();
         e.stopPropagation();
 
@@ -94,7 +106,7 @@ exports.on_load_success = function (invites_data) {
         if (modal_invite_id !== meta.invite_id) {
             blueslip.error("Invite revoking canceled due to non-matching fields.");
             ui_report.message(i18n.t("Resending encountered an error. Please reload and try again."),
-               $("#home-error"), 'alert-error');
+                              $("#home-error"), 'alert-error');
         }
         $("#revoke_invite_modal").modal("hide");
         revoke_button.prop("disabled", true).text(i18n.t("Working…"));
@@ -116,7 +128,7 @@ exports.on_load_success = function (invites_data) {
         if (modal_invite_id !== meta.invite_id) {
             blueslip.error("Invite resending canceled due to non-matching fields.");
             ui_report.message(i18n.t("Resending encountered an error. Please reload and try again."),
-               $("#home-error"), 'alert-error');
+                              $("#home-error"), 'alert-error');
         }
         $("#resend_invite_modal").modal("hide");
         resend_button.prop("disabled", true).text(i18n.t("Working…"));
@@ -141,3 +153,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = settings_invites;
 }
+window.settings_invites = settings_invites;

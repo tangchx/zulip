@@ -1,20 +1,25 @@
+set_global('blueslip', global.make_zblueslip());
+set_global('$', {});
+
+set_global('reload', {});
 zrequire('channel');
 
-set_global('$', {});
-set_global('reload', {});
-set_global('blueslip', {});
 
-var default_stub_xhr = 'default-stub-xhr';
+const default_stub_xhr = 'default-stub-xhr';
 
 function test_with_mock_ajax(test_params) {
-    var ajax_called;
-    var ajax_options;
+    const {
+        xhr = default_stub_xhr,
+        run_code,
+        check_ajax_options,
+    } = test_params;
 
+    let ajax_called;
+    let ajax_options;
     $.ajax = function (options) {
         $.ajax = undefined;
         ajax_called = true;
         ajax_options = options;
-        var xhr = test_params.xhr || default_stub_xhr;
 
         options.simulate_success = function (data, text_status) {
             options.success(data, text_status, xhr);
@@ -27,13 +32,13 @@ function test_with_mock_ajax(test_params) {
         return xhr;
     };
 
-    test_params.run_code();
+    run_code();
     assert(ajax_called);
-    test_params.check_ajax_options(ajax_options);
+    check_ajax_options(ajax_options);
 }
 
 
-(function test_basics() {
+run_test('basics', () => {
     test_with_mock_ajax({
         run_code: function () {
             channel.post({});
@@ -110,18 +115,18 @@ function test_with_mock_ajax(test_params) {
         },
     });
 
-}());
+});
 
-(function test_normal_post() {
-    var data = {
+run_test('normal_post', () => {
+    const data = {
         s: 'some_string',
         num: 7,
         lst: [1, 2, 4, 8],
     };
 
-    var orig_success_called;
-    var orig_error_called;
-    var stub_xhr = 'stub-xhr-normal-post';
+    let orig_success_called;
+    let orig_error_called;
+    const stub_xhr = 'stub-xhr-normal-post';
 
     test_with_mock_ajax({
         xhr: stub_xhr,
@@ -155,12 +160,12 @@ function test_with_mock_ajax(test_params) {
             assert(orig_error_called);
         },
     });
-}());
+});
 
-(function test_patch_with_form_data() {
-    var appended;
+run_test('patch_with_form_data', () => {
+    let appended;
 
-    var data = {
+    const data = {
         append: function (k, v) {
             assert.equal(k, 'method');
             assert.equal(v, 'PATCH');
@@ -186,9 +191,9 @@ function test_with_mock_ajax(test_params) {
             options.simulate_error();
         },
     });
-}());
+});
 
-(function test_reload_on_403_error() {
+run_test('reload_on_403_error', () => {
     test_with_mock_ajax({
         xhr: {
             status: 403,
@@ -200,7 +205,7 @@ function test_with_mock_ajax(test_params) {
         },
 
         check_ajax_options: function (options) {
-            var reload_initiated;
+            let reload_initiated;
             reload.initiate = function (options) {
                 reload_initiated = true;
                 assert.deepEqual(options, {
@@ -215,9 +220,9 @@ function test_with_mock_ajax(test_params) {
             assert(reload_initiated);
         },
     });
-}());
+});
 
-(function test_unexpected_403_response() {
+run_test('unexpected_403_response', () => {
     test_with_mock_ajax({
         xhr: {
             status: 403,
@@ -229,20 +234,15 @@ function test_with_mock_ajax(test_params) {
         },
 
         check_ajax_options: function (options) {
-            var has_error;
-            blueslip.error = function (msg) {
-                assert.equal(msg, 'Unexpected 403 response from server');
-                has_error = true;
-            };
-
+            blueslip.set_test_data('error', 'Unexpected 403 response from server');
             options.simulate_error();
-
-            assert(has_error);
+            assert.equal(blueslip.get_test_logs('error').length, 1);
+            blueslip.clear_test_data();
         },
     });
-}());
+});
 
-(function test_retry() {
+run_test('retry', () => {
     test_with_mock_ajax({
         run_code: function () {
             channel.post({
@@ -252,12 +252,6 @@ function test_with_mock_ajax(test_params) {
         },
 
         check_ajax_options: function (options) {
-            var logged;
-            blueslip.log = function (msg) {
-                // Our log formatting is a bit broken.
-                assert.equal(msg, 'Retrying idempotent[object Object]');
-                logged = true;
-            };
             global.patch_builtin('setTimeout', function (f, delay) {
                 assert.equal(delay, 0);
                 f();
@@ -273,39 +267,35 @@ function test_with_mock_ajax(test_params) {
                 },
             });
 
-            assert(logged);
+            assert.equal(blueslip.get_test_logs('log').length, 1);
+            assert.equal(blueslip.get_test_logs('log')[0].message, 'Retrying idempotent[object Object]');
+            blueslip.clear_test_data();
         },
     });
-}());
+});
 
-(function test_too_many_pending() {
+run_test('too_many_pending', () => {
     $.ajax = function () {
-        var xhr = 'stub';
+        const xhr = 'stub';
         return xhr;
     };
 
-    var warned;
-    blueslip.warn = function (msg) {
-        assert.equal(
-            msg,
-            'The length of pending_requests is over 50. Most likely they are not being correctly removed.'
-        );
-        warned = true;
-    };
-
+    blueslip.set_test_data('warn',
+                           'The length of pending_requests is over 50. ' +
+                           'Most likely they are not being correctly removed.');
     _.times(50, function () {
         channel.post({});
     });
+    assert.equal(blueslip.get_test_logs('warn').length, 1);
+    blueslip.clear_test_data();
+});
 
-    assert(warned);
-}());
-
-(function test_xhr_error_message() {
-    var xhr = {
+run_test('xhr_error_message', () => {
+    let xhr = {
         status: '200',
         responseText: 'does not matter',
     };
-    var msg = 'data added';
+    let msg = 'data added';
     assert.equal(channel.xhr_error_message(msg, xhr), 'data added');
 
     xhr = {
@@ -314,4 +304,4 @@ function test_with_mock_ajax(test_params) {
     };
     msg = 'some message';
     assert.equal(channel.xhr_error_message(msg, xhr), 'some message: file not found');
-}());
+});

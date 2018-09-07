@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Text
+from typing import Any, Dict, List, Optional
 
 # This file is adapted from samples/shellinabox/ssh-krb-wrapper in
 # https://github.com/davidben/webathena, which has the following
@@ -26,9 +26,18 @@ from typing import Any, Dict, List, Optional, Text
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from zerver.lib.str_utils import force_bytes
 import base64
 import struct
+from typing import Union
+
+def force_bytes(s: Union[str, bytes], encoding: str='utf-8') -> bytes:
+    """converts a string to binary string"""
+    if isinstance(s, bytes):
+        return s
+    elif isinstance(s, str):
+        return s.encode(encoding)
+    else:
+        raise TypeError("force_bytes expects a string type")
 
 # Some DER encoding stuff. Bleh. This is because the ccache contains a
 # DER-encoded krb5 Ticket structure, whereas Webathena deserializes
@@ -82,8 +91,8 @@ def der_encode_uint32(val: int) -> bytes:
         raise ValueError("Bad value")
     return der_encode_integer(val)
 
-def der_encode_string(val: Text) -> bytes:
-    if not isinstance(val, Text):
+def der_encode_string(val: str) -> bytes:
+    if not isinstance(val, str):
         raise TypeError("unicode")
     return der_encode_tlv(0x1b, val.encode("utf-8"))
 

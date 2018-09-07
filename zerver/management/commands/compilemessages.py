@@ -1,11 +1,12 @@
 
+import json
 import os
-import re
-from subprocess import CalledProcessError, check_output
-from typing import Any, Dict, List, Text
-
 import polib
+import re
 import ujson
+from subprocess import CalledProcessError, check_output
+from typing import Any, Dict, List
+
 from django.conf import settings
 from django.conf.locale import LANG_INFO
 from django.core.management.base import CommandParser
@@ -55,18 +56,18 @@ class Command(compilemessages.Command):
             lang_list.sort(key=lambda lang: lang['name'])
 
         with open(output_path, 'w') as output_file:
-            ujson.dump({'name_map': lang_list}, output_file, indent=4)
+            ujson.dump({'name_map': lang_list}, output_file, indent=4, sort_keys=True)
             output_file.write('\n')
 
-    def get_po_filename(self, locale_path: Text, locale: Text) -> Text:
+    def get_po_filename(self, locale_path: str, locale: str) -> str:
         po_template = '{}/{}/LC_MESSAGES/django.po'
         return po_template.format(locale_path, locale)
 
-    def get_json_filename(self, locale_path: Text, locale: Text) -> Text:
+    def get_json_filename(self, locale_path: str, locale: str) -> str:
         return "{}/{}/translations.json".format(locale_path, locale)
 
-    def get_name_from_po_file(self, po_filename: Text, locale: Text) -> Text:
-        lang_name_re = re.compile('"Language-Team: (.*?) \(')
+    def get_name_from_po_file(self, po_filename: str, locale: str) -> str:
+        lang_name_re = re.compile(r'"Language-Team: (.*?) \(')
         with open(po_filename, 'r') as reader:
             result = lang_name_re.search(reader.read())
             if result:
@@ -78,10 +79,10 @@ class Command(compilemessages.Command):
             else:
                 raise Exception("Unknown language %s" % (locale,))
 
-    def get_locales(self) -> List[Text]:
+    def get_locales(self) -> List[str]:
         tracked_files = check_output(['git', 'ls-files', 'static/locale'])
         tracked_files = tracked_files.decode().split()
-        regex = re.compile('static/locale/(\w+)/LC_MESSAGES/django.po')
+        regex = re.compile(r'static/locale/(\w+)/LC_MESSAGES/django.po')
         locales = ['en']
         for tracked_file in tracked_files:
             matched = regex.search(tracked_file)
@@ -140,10 +141,10 @@ class Command(compilemessages.Command):
             data['languages'].append(info)
 
         with open(output_path, 'w') as writer:
-            ujson.dump(data, writer, indent=2)
+            json.dump(data, writer, indent=2, sort_keys=True)
             writer.write('\n')
 
-    def get_translation_percentage(self, locale_path: Text, locale: Text) -> int:
+    def get_translation_percentage(self, locale_path: str, locale: str) -> int:
 
         # backend stats
         po = polib.pofile(self.get_po_filename(locale_path, locale))

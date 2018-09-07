@@ -49,25 +49,45 @@ exports.options = function (config) {
         throw Error("Invalid upload mode!");
     }
 
-    var uploadStarted = function () {
+    var hide_upload_status = function () {
+        send_button.prop("disabled", false);
+        send_status.removeClass("alert-info").hide();
+        $('div.progress.active').remove();
+    };
+
+    var drop = function () {
         send_button.attr("disabled", "");
         send_status.addClass("alert-info").show();
-        send_status_close.one('click', compose.abort_xhr);
-        error_msg.html($("<p>").text(i18n.t("Uploading…"))
-            .after('<div class="progress progress-striped active">' +
-                   '<div class="bar" id="' + upload_bar + '" style="width: 00%;"></div>' +
-                   '</div>'));
+        send_status_close.one('click', function () {
+            setTimeout(function () {
+                hide_upload_status();
+            }, 500);
+            compose.abort_xhr();
+        });
+    };
+
+    var uploadStarted = function (i, file) {
+        error_msg.html($("<p>").text(i18n.t("Uploading…")));
+        // Here file.lastModified is unique for each upload
+        // so it is used to track each upload individually
+        send_status.append('<div class="progress active">' +
+                           '<div class="bar" id="' + upload_bar + '-' + file.lastModified + '" style="width: 0"></div>' +
+                           '</div>');
+        compose_ui.insert_syntax_and_focus("[Uploading " + file.name + "…]()", textarea);
     };
 
     var progressUpdated = function (i, file, progress) {
-        $("#" + upload_bar).width(progress + "%");
+        $("#" + upload_bar + '-' + file.lastModified).width(progress + "%");
     };
 
     var uploadError = function (error_code, server_response, file) {
         var msg;
-        send_status.addClass("alert-error")
-            .removeClass("alert-info");
+        send_status.addClass("alert-error").removeClass("alert-info");
         send_button.prop("disabled", false);
+        if (file !== undefined) {
+            $("#" + upload_bar + '-' + file.lastModified).parent().remove();
+        }
+
         switch (error_code) {
         case 'BrowserNotSupported':
             msg = i18n.t("File upload is not yet available for your browser.");
@@ -113,15 +133,20 @@ exports.options = function (config) {
         if (i === -1) {
             // This is a paste, so there's no filename. Show the image directly
             var pasted_image_uri = "[pasted image](" + uri + ")";
-            compose_ui.insert_syntax_and_focus(pasted_image_uri, textarea);
+            compose_ui.replace_syntax("[Uploading " + file.name + "…]()", pasted_image_uri, textarea);
         } else {
             // This is a dropped file, so make the filename a link to the image
             var filename_uri = "[" + filename + "](" + uri + ")";
-            compose_ui.insert_syntax_and_focus(filename_uri, textarea);
+            compose_ui.replace_syntax("[Uploading " + file.name + "…]()", filename_uri, textarea);
         }
         compose_ui.autosize_textarea();
-        send_button.prop("disabled", false);
-        send_status.removeClass("alert-info").hide();
+
+        setTimeout(function () {
+            $("#" + upload_bar  + '-' + file.lastModified).parent().remove();
+            if ($('div.progress.active').length === 0) {
+                hide_upload_status(file);
+            }
+        }, 500);
 
         // In order to upload the same file twice in a row, we need to clear out
         // the file input element, so that the next time we use the file dialog,
@@ -144,7 +169,8 @@ exports.options = function (config) {
             csrfmiddlewaretoken: csrf_token,
         },
         raw_droppable: ['text/uri-list', 'text/plain'],
-        drop: uploadStarted,
+        drop: drop,
+        uploadStarted: uploadStarted,
         progressUpdated: progressUpdated,
         error: uploadError,
         uploadFinished: uploadFinished,
@@ -158,21 +184,10 @@ exports.options = function (config) {
     };
 };
 
-// Expose the internal file upload functions to the desktop app,
-// since the linux/windows QtWebkit based apps upload images
-// directly to the server
-if (window.bridge) {
-    var opts = exports.options({ mode: "compose" });
-
-    exports.uploadStarted = opts.drop;
-    exports.progressUpdated = opts.progressUpdated;
-    exports.uploadError = opts.error;
-    exports.uploadFinished = opts.uploadFinished;
-}
-
 return exports;
 }());
 
 if (typeof module !== 'undefined') {
     module.exports = upload;
 }
+window.upload = upload;

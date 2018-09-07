@@ -1,13 +1,15 @@
 # Library code for use in management commands
 
 import sys
+import time
 
 from argparse import ArgumentParser
+from django.conf import settings
 from django.core.exceptions import MultipleObjectsReturned
 from django.core.management.base import BaseCommand, CommandError
-from typing import Any, Dict, Optional, Text, List
+from typing import Any, Dict, Optional, List
 
-from zerver.models import Realm, UserProfile
+from zerver.models import Realm, UserProfile, Client, get_client
 
 def is_integer_string(val: str) -> bool:
     try:
@@ -15,6 +17,22 @@ def is_integer_string(val: str) -> bool:
         return True
     except ValueError:
         return False
+
+def check_config() -> None:
+    for (setting_name, default) in settings.REQUIRED_SETTINGS:
+        # if required setting is the same as default OR is not found in settings,
+        # throw error to add/set that setting in config
+        try:
+            if settings.__getattr__(setting_name) != default:
+                continue
+        except AttributeError:
+            pass
+
+        raise CommandError("Error: You must set %s in /etc/zulip/settings.py." % (setting_name,))
+
+def sleep_forever() -> None:
+    while True:  # nocoverage
+        time.sleep(10**9)
 
 class ZulipBaseCommand(BaseCommand):
     def add_realm_args(self, parser: ArgumentParser, required: bool=False,
@@ -31,30 +49,20 @@ You can use the command list_realms to find ID of the realms in this server."""
             help=help)
 
     def add_user_list_args(self, parser: ArgumentParser,
-                           required: bool=False,
-                           help: Optional[str]=None,
-                           all_users_arg: bool=True,
-                           all_users_help: Optional[str]=None) -> None:
-        if help is None:
-            help = 'A comma-separated list of email addresses.'
-
+                           help: str='A comma-separated list of email addresses.',
+                           all_users_help: str="All users in realm.") -> None:
         parser.add_argument(
             '-u', '--users',
             dest='users',
-            required=required,
             type=str,
             help=help)
 
-        if all_users_arg:
-            if all_users_help is None:
-                all_users_help = "All users in realm."
-
-            parser.add_argument(
-                '-a', '--all-users',
-                dest='all_users',
-                action="store_true",
-                default=False,
-                help=all_users_help)
+        parser.add_argument(
+            '-a', '--all-users',
+            dest='all_users',
+            action="store_true",
+            default=False,
+            help=all_users_help)
 
     def get_realm(self, options: Dict[str, Any]) -> Optional[Realm]:
         val = options["realm_id"]
@@ -96,7 +104,7 @@ You can use the command list_realms to find ID of the realms in this server."""
             user_profiles.append(self.get_user(email, realm))
         return user_profiles
 
-    def get_user(self, email: Text, realm: Optional[Realm]) -> UserProfile:
+    def get_user(self, email: str, realm: Optional[Realm]) -> UserProfile:
 
         # If a realm is specified, try to find the user there, and
         # throw an error if they don't exist.
@@ -117,3 +125,7 @@ You can use the command list_realms to find ID of the realms in this server."""
                                "to specify which one to modify.")
         except UserProfile.DoesNotExist:
             raise CommandError("This Zulip server does not contain a user with email '%s'" % (email,))
+
+    def get_client(self) -> Client:
+        """Returns a Zulip Client object to be used for things done in management commands"""
+        return get_client("ZulipServer")

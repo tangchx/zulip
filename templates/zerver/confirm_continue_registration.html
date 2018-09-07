@@ -10,44 +10,30 @@
                         <h1 class="get-started">{{ _("Zulip account not found.") }}</h1>
                     </div>
                     <div class="white-box">
-                        {% if invalid_email %}
-                        {# If the email address is invalid, we can't send the user #}
-                        {# to the preregistered user code path. #}
                         <p>
                             {% trans %}
-                            Please click the following button if you wish to register.
+                            No account found for {{ email }}.
                             {% endtrans %}
                         </p>
-                        <a href='/register/' class="button-new sea-green">Sign up</a>
-                        {% else %}
-                        <p>
-                            {% trans %}
-
-                            No account found for {{ email }}. Would you like to register instead?
-
-                            {% endtrans %}
-                        </p>
-                        <div style="text-align: left;">
+                        <div style="text-align: center;">
                             <form class="form-inline" id="send_confirm" name="send_confirm"
-                                action="/login/" method="get">
+                              action="/login/" method="get">
                                 <input type="hidden"
-                                       id="email"
-                                       name="email"
-                                       value="{{ email }}" />
+                                  id="email"
+                                  name="email"
+                                  value="{{ email }}" />
                                 <button>
-                                    {{ _("Go back to login") }}
+                                    {{ _("Log in with another account") }}
                                 </button>
                             </form>
-                            {# TODO: Ideally, this should allow users to register #}
-                            {# without going over to /register and re-authenticating. #}
+                            <br/>
                             <form class="form-inline" id="send_confirm" name="send_confirm"
-                                action="/register/" method="get">
+                              action="{{ continue_link }}" method="get">
                                 <button class="outline">
-                                    {{ _("Sign up instead") }}
+                                    {{ _("Continue to registration") }}
                                 </button>
                             </form>
                         </div>
-                        {% endif %}
                     </div>
                 </div>
             </div>

@@ -5,13 +5,14 @@ zrequire('util');
 zrequire('XDate', 'node_modules/xdate/src/xdate');
 zrequire('Filter', 'js/filter');
 zrequire('FetchStatus', 'js/fetch_status');
+zrequire('MessageListData', 'js/message_list_data');
 zrequire('MessageListView', 'js/message_list_view');
 zrequire('message_list');
 
 var noop = function () {};
 
 set_global('page_params', {
-  twenty_four_hour_time: false,
+    twenty_four_hour_time: false,
 });
 set_global('home_msg_list', null);
 set_global('feature_flags', {twenty_four_hour_time: false});
@@ -45,7 +46,7 @@ set_global('rows', {
     },
 });
 
-(function test_merge_message_groups() {
+run_test('merge_message_groups', () => {
     // MessageListView has lots of DOM code, so we are going to test the message
     // group mearging logic on its own.
 
@@ -274,7 +275,7 @@ set_global('rows', {
         assert_message_groups_list_equal(result.append_groups, []);
         assert_message_groups_list_equal(result.prepend_groups, []);
         assert_message_groups_list_equal(result.rerender_groups,
-            [build_message_group([message2, message1])]);
+                                         [build_message_group([message2, message1])]);
         assert_message_list_equal(result.append_messages, []);
         assert_message_list_equal(result.rerender_messages, []);
     }());
@@ -358,9 +359,9 @@ set_global('rows', {
         assert_message_list_equal(result.rerender_messages, []);
     }());
 
-}());
+});
 
-(function test_render_windows() {
+run_test('render_windows', () => {
     // We only render up to 400 messages at a time in our message list,
     // and we only change the window (which is a range, really, with
     // start/end) when the pointer moves outside of the window or close
@@ -369,14 +370,17 @@ set_global('rows', {
     var view = (function make_view() {
         var table_name = 'zfilt';
         var filter = new Filter();
-        var opts = {};
 
-        var list = new message_list.MessageList(table_name, filter, opts);
+        var list = new message_list.MessageList({
+            table_name: table_name,
+            filter: filter,
+        });
+
         var view = list.view;
 
         // Stub out functionality that is not core to the rendering window
         // logic.
-        list.unmuted_messages = function (messages) {
+        list.data.unmuted_messages = function (messages) {
             return messages;
         };
 
@@ -474,4 +478,4 @@ set_global('rows', {
 
     verify_move(197, [0, 400]);
     verify_no_move_range(0, 350);
-}());
+});

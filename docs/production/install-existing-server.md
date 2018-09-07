@@ -2,13 +2,13 @@
 :orphan:
 ```
 
-# Production Installation on Existing Ubuntu Server
+# Production Installation on Existing Server
 
 Here are some tips for installing the latest release Zulip on a
-production server running Ubuntu. The Zulip installation scripts
-assume that it has carte blanche to overwrite your configuration files
-in /etc, so we recommend against installing it on a server running
-other nginx or django apps.
+production server running Debian or Ubuntu. The Zulip installation
+scripts assume that it has carte blanche to overwrite your
+configuration files in /etc, so we recommend against installing it on
+a server running other nginx or django apps.
 
 But if you do, here are some things you can do that may make it
 possible to retain your existing site. However, this is *NOT*
@@ -16,7 +16,7 @@ recommended, and you may break your server. Make sure you have backups
 and a provisioning script ready to go to wipe and restore your
 existing services if (when) your server goes down.
 
-These instructions are only for experts.  If you're not an experiecned
+These instructions are only for experts.  If you're not an experienced
 Linux sysadmin, you will have a much better experience if you get a
 dedicated VM to install Zulip on instead (or [use zulipchat.com](https://zulipchat.com).
 

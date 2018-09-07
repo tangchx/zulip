@@ -16,8 +16,11 @@ from zerver.lib.request import has_request_variables, REQ
 from zerver.lib.subdomains import get_subdomain
 from zerver.models import Realm
 from zerver.templatetags.app_filters import render_markdown_path
+from zerver.context_processors import zulip_default_context
 
 def add_api_uri_context(context: Dict[str, Any], request: HttpRequest) -> None:
+    context.update(zulip_default_context(request))
+
     subdomain = get_subdomain(request)
     if (subdomain != Realm.SUBDOMAIN_FOR_ROOT_DOMAIN
             or not settings.ROOT_DOMAIN_LANDING_PAGE):
@@ -34,7 +37,16 @@ def add_api_uri_context(context: Dict[str, Any], request: HttpRequest) -> None:
     context['external_uri_scheme'] = settings.EXTERNAL_URI_SCHEME
     context['api_url'] = api_url
     context['api_url_scheme_relative'] = api_url_scheme_relative
+
     context["html_settings_links"] = html_settings_links
+    if html_settings_links:
+        settings_html = '<a href="/#settings">Zulip settings page</a>'
+        subscriptions_html = '<a target="_blank" href="/#streams">streams page</a>'
+    else:
+        settings_html = 'Zulip settings page'
+        subscriptions_html = 'streams page'
+    context['settings_html'] = settings_html
+    context['subscriptions_html'] = subscriptions_html
 
 class ApiURLView(TemplateView):
     def get_context_data(self, **kwargs: Any) -> Dict[str, str]:
@@ -52,6 +64,8 @@ class MarkdownDirectoryView(ApiURLView):
     def get_path(self, article: str) -> str:
         if article == "":
             article = "index"
+        elif article == "include/sidebar_index":
+            pass
         elif "/" in article:
             article = "missing"
         return self.path_template % (article,)
@@ -68,10 +82,20 @@ class MarkdownDirectoryView(ApiURLView):
 
         # For disabling the "Back to home" on the homepage
         context["not_index_page"] = not path.endswith("/index.md")
-        if self.template_name == "zerver/help/main.html":
+        if self.path_template == '/zerver/help/%s.md':
             context["page_is_help_center"] = True
+            context["doc_root"] = "/help/"
+            sidebar_index = self.get_path("include/sidebar_index")
+            # We want the sliding/collapsing behavior for /help pages only
+            sidebar_class = "sidebar slide"
         else:
             context["page_is_api_center"] = True
+            context["doc_root"] = "/api/"
+            sidebar_index = self.get_path("sidebar_index")
+            sidebar_class = "sidebar"
+
+        context["sidebar_index"] = sidebar_index
+        context["sidebar_class"] = sidebar_class
         # An "article" might require the api_uri_context to be rendered
         api_uri_context = {}  # type: Dict[str, Any]
         add_api_uri_context(api_uri_context, self.request)
@@ -102,30 +126,6 @@ def add_integrations_context(context: Dict[str, Any]) -> None:
     context['integrations_dict'] = alphabetical_sorted_integration
     context['integrations_count_display'] = integrations_count_display
 
-    if "html_settings_links" in context and context["html_settings_links"]:
-        settings_html = '<a href="../../#settings">Zulip settings page</a>'
-        subscriptions_html = '<a target="_blank" href="../../#streams">streams page</a>'
-    else:
-        settings_html = 'Zulip settings page'
-        subscriptions_html = 'streams page'
-
-    context['settings_html'] = settings_html
-    context['subscriptions_html'] = subscriptions_html
-
-
-def add_context_for_single_integration(context: Dict[str, Any], name: str, request: HttpRequest) -> None:
-    add_api_uri_context(context, request)
-
-    if "html_settings_links" in context and context["html_settings_links"]:
-        settings_html = '<a href="../../#settings">Zulip settings page</a>'
-        subscriptions_html = '<a target="_blank" href="../../#streams">streams page</a>'
-    else:
-        settings_html = 'Zulip settings page'
-        subscriptions_html = 'streams page'
-
-    context['settings_html'] = settings_html
-    context['subscriptions_html'] = subscriptions_html
-
 
 class IntegrationView(ApiURLView):
     template_name = 'zerver/integrations/index.html'
@@ -138,13 +138,15 @@ class IntegrationView(ApiURLView):
 
 @has_request_variables
 def integration_doc(request: HttpRequest, integration_name: str=REQ(default=None)) -> HttpResponse:
+    if not request.is_ajax():
+        return HttpResponseNotFound()
     try:
         integration = INTEGRATIONS[integration_name]
     except KeyError:
         return HttpResponseNotFound()
 
     context = {}  # type: Dict[str, Any]
-    add_context_for_single_integration(context, integration_name, request)
+    add_api_uri_context(context, request)
 
     context['integration_name'] = integration.name
     context['integration_display_name'] = integration.display_name
@@ -156,6 +158,14 @@ def integration_doc(request: HttpRequest, integration_name: str=REQ(default=None
         context['hubot_docs_url'] = integration.hubot_docs_url
     if isinstance(integration, EmailIntegration):
         context['email_gateway_example'] = settings.EMAIL_GATEWAY_EXAMPLE
+    if integration.name == 'freshdesk':
+        # In our Freshdesk docs, some nested code blocks have characters such
+        # as '{' encoded as '&#123;' to prevent clashes with Jinja2 syntax,
+        # but the encoded form never gets rendered because the text ends up
+        # inside a <pre> tag. So here, we explicitly set a directive that
+        # a particular template should be "unescaped" before being displayed.
+        # Note that this value is used by render_markdown_path.
+        context['unescape_rendered_html'] = True
 
     doc_html_str = render_markdown_path(integration.doc, context)
 

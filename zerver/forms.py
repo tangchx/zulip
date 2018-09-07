@@ -25,14 +25,17 @@ from zerver.lib.send_email import send_email, FromAddress
 from zerver.lib.subdomains import get_subdomain, user_matches_subdomain, is_root_domain_available
 from zerver.lib.users import check_full_name
 from zerver.models import Realm, get_user, UserProfile, get_realm, email_to_domain, \
-    email_allowed_for_realm, DisposableEmailError, DomainNotAllowedForRealmError
-from zproject.backends import email_auth_enabled
+    email_allowed_for_realm, DisposableEmailError, DomainNotAllowedForRealmError, \
+    EmailContainsPlusError
+from zproject.backends import email_auth_enabled, email_belongs_to_ldap
 
 import logging
 import re
 import DNS
 
-from typing import Any, Callable, List, Optional, Text, Dict
+from typing import Any, Callable, List, Optional, Dict
+from two_factor.forms import AuthenticationTokenForm as TwoFactorAuthenticationTokenForm
+from two_factor.utils import totp_digits
 
 MIT_VALIDATION_ERROR = u'That user does not exist at MIT or is a ' + \
                        u'<a href="https://ist.mit.edu/email-lists">mailing list</a>. ' + \
@@ -42,7 +45,7 @@ WRONG_SUBDOMAIN_ERROR = "Your Zulip account is not a member of the " + \
                         "organization associated with this subdomain.  " + \
                         "Please contact %s with any questions!" % (FromAddress.SUPPORT,)
 
-def email_is_not_mit_mailing_list(email: Text) -> None:
+def email_is_not_mit_mailing_list(email: str) -> None:
     """Prevent MIT mailing lists from signing up for Zulip"""
     if "@mit.edu" in email:
         username = email.rsplit("@", 1)[0]
@@ -55,7 +58,7 @@ def email_is_not_mit_mailing_list(email: Text) -> None:
             else:
                 raise AssertionError("Unexpected DNS error")
 
-def check_subdomain_available(subdomain: str) -> None:
+def check_subdomain_available(subdomain: str, from_management_command: bool=False) -> None:
     error_strings = {
         'too short': _("Subdomain needs to have length 3 or greater."),
         'extremal dash': _("Subdomain cannot start or end with a '-'."),
@@ -70,6 +73,8 @@ def check_subdomain_available(subdomain: str) -> None:
         raise ValidationError(error_strings['extremal dash'])
     if not re.match('^[a-z0-9-]*$', subdomain):
         raise ValidationError(error_strings['bad character'])
+    if from_management_command:
+        return
     if len(subdomain) < 3:
         raise ValidationError(error_strings['too short'])
     if is_reserved_subdomain(subdomain) or \
@@ -97,7 +102,7 @@ class RegistrationForm(forms.Form):
             max_length=Realm.MAX_REALM_NAME_LENGTH,
             required=self.realm_creation)
 
-    def clean_full_name(self) -> Text:
+    def clean_full_name(self) -> str:
         try:
             return check_full_name(self.cleaned_data['full_name'])
         except JsonableError as e:
@@ -154,6 +159,8 @@ class HomepageForm(forms.Form):
                       string_id=realm.string_id, email=email))
         except DisposableEmailError:
             raise ValidationError(_("Please use your real email address."))
+        except EmailContainsPlusError:
+            raise ValidationError(_("Email addresses containing + are not allowed in this organization."))
 
         validate_email_for_realm(realm, email)
 
@@ -162,7 +169,7 @@ class HomepageForm(forms.Form):
 
         return email
 
-def email_is_not_disposable(email: Text) -> None:
+def email_is_not_disposable(email: str) -> None:
     if is_disposable_domain(email_to_domain(email)):
         raise ValidationError(_("Please use your real email address."))
 
@@ -177,16 +184,24 @@ class LoggingSetPasswordForm(SetPasswordForm):
                            commit=commit)
         return self.user
 
+def generate_password_reset_url(user_profile: UserProfile,
+                                token_generator: PasswordResetTokenGenerator) -> str:
+    token = token_generator.make_token(user_profile)
+    uid = urlsafe_base64_encode(force_bytes(user_profile.id)).decode('ascii')
+    endpoint = reverse('django.contrib.auth.views.password_reset_confirm',
+                       kwargs=dict(uidb64=uid, token=token))
+    return "{}{}".format(user_profile.realm.uri, endpoint)
+
 class ZulipPasswordResetForm(PasswordResetForm):
     def save(self,
              domain_override: Optional[bool]=None,
-             subject_template_name: Text='registration/password_reset_subject.txt',
-             email_template_name: Text='registration/password_reset_email.html',
+             subject_template_name: str='registration/password_reset_subject.txt',
+             email_template_name: str='registration/password_reset_email.html',
              use_https: bool=False,
              token_generator: PasswordResetTokenGenerator=default_token_generator,
-             from_email: Optional[Text]=None,
+             from_email: Optional[str]=None,
              request: HttpRequest=None,
-             html_email_template_name: Optional[Text]=None,
+             html_email_template_name: Optional[str]=None,
              extra_email_context: Optional[Dict[str, Any]]=None
              ) -> None:
         """
@@ -207,6 +222,15 @@ class ZulipPasswordResetForm(PasswordResetForm):
         if not email_auth_enabled(realm):
             logging.info("Password reset attempted for %s even though password auth is disabled." % (email,))
             return
+        if email_belongs_to_ldap(realm, email):
+            # TODO: Ideally, we'd provide a user-facing error here
+            # about the fact that they aren't allowed to have a
+            # password in the Zulip server and should change it in LDAP.
+            logging.info("Password reset not allowed for user in LDAP domain")
+            return
+        if realm.deactivated:
+            logging.info("Realm is deactivated")
+            return
 
         user = None  # type: Optional[UserProfile]
         try:
@@ -219,26 +243,26 @@ class ZulipPasswordResetForm(PasswordResetForm):
             'realm_uri': realm.uri,
         }
 
-        if user is not None:
-            token = token_generator.make_token(user)
-            uid = urlsafe_base64_encode(force_bytes(user.id)).decode('ascii')
-            endpoint = reverse('django.contrib.auth.views.password_reset_confirm',
-                               kwargs=dict(uidb64=uid, token=token))
+        if user is not None and not user.is_active:
+            context['user_deactivated'] = True
+            user = None
 
-            context['no_account_in_realm'] = False
-            context['reset_url'] = "{}{}".format(user.realm.uri, endpoint)
+        if user is not None:
+            context['active_account_in_realm'] = True
+            context['reset_url'] = generate_password_reset_url(user, token_generator)
             send_email('zerver/emails/password_reset', to_user_id=user.id,
                        from_name="Zulip Account Security",
-                       from_address=FromAddress.NOREPLY, context=context)
+                       from_address=FromAddress.tokenized_no_reply_address(),
+                       context=context)
         else:
-            context['no_account_in_realm'] = True
-            accounts = UserProfile.objects.filter(email__iexact=email)
-            if accounts:
-                context['accounts'] = accounts
-                context['multiple_accounts'] = accounts.count() != 1
+            context['active_account_in_realm'] = False
+            active_accounts_in_other_realms = UserProfile.objects.filter(email__iexact=email, is_active=True)
+            if active_accounts_in_other_realms:
+                context['active_accounts_in_other_realms'] = active_accounts_in_other_realms
             send_email('zerver/emails/password_reset', to_email=email,
                        from_name="Zulip Account Security",
-                       from_address=FromAddress.NOREPLY, context=context)
+                       from_address=FromAddress.tokenized_no_reply_address(),
+                       context=context)
 
 class CreateUserForm(forms.Form):
     full_name = forms.CharField(max_length=100)
@@ -284,22 +308,32 @@ class OurAuthenticationForm(AuthenticationForm):
 
         return self.cleaned_data
 
-    def add_prefix(self, field_name: Text) -> Text:
+    def add_prefix(self, field_name: str) -> str:
         """Disable prefix, since Zulip doesn't use this Django forms feature
         (and django-two-factor does use it), and we'd like both to be
         happy with this form.
         """
         return field_name
 
+class AuthenticationTokenForm(TwoFactorAuthenticationTokenForm):
+    """
+    We add this form to update the widget of otp_token. The default
+    widget is an input element whose type is a number, which doesn't
+    stylistically match our theme.
+    """
+    otp_token = forms.IntegerField(label=_("Token"), min_value=1,
+                                   max_value=int('9' * totp_digits()),
+                                   widget=forms.TextInput)
+
 class MultiEmailField(forms.Field):
-    def to_python(self, emails: Text) -> List[Text]:
+    def to_python(self, emails: str) -> List[str]:
         """Normalize data to a list of strings."""
         if not emails:
             return []
 
         return [email.strip() for email in emails.split(',')]
 
-    def validate(self, emails: List[Text]) -> None:
+    def validate(self, emails: List[str]) -> None:
         """Check if value consists only of valid emails."""
         super().validate(emails)
         for email in emails:
@@ -309,7 +343,7 @@ class FindMyTeamForm(forms.Form):
     emails = MultiEmailField(
         help_text=_("Add up to 10 comma-separated email addresses."))
 
-    def clean_emails(self) -> List[Text]:
+    def clean_emails(self) -> List[str]:
         emails = self.cleaned_data['emails']
         if len(emails) > 10:
             raise forms.ValidationError(_("Please enter at most 10 emails."))

@@ -1,10 +1,9 @@
-# Get new events from an events queue
+# Get events from an event queue
 
 `GET {{ api_url }}/v1/events`
 
-This endpoint allows you to receive new events from an event queue that
-can be created by
-[requesting the `{{ api_url}}/v1/register` endpoint](/api/register-queue).
+This endpoint allows you to receive new events from
+[a registered event queue](/api/register-queue).
 
 ## Usage examples
 <div class="code-section" markdown="1">
@@ -44,15 +43,6 @@ print(client.get_events(
     queue_id="1515010080:4",
     last_event_id=-1
 ))
-
-# Print each message the user receives
-# This is a blocking call that will run forever
-client.call_on_each_message(lambda msg: sys.stdout.write(str(msg) + "\n"))
-
-# Print every event relevant to the user
-# This is a blocking call that will run forever
-# This will never be reached unless you comment out the previous line
-client.call_on_each_event(lambda msg: sys.stdout.write(str(msg) + "\n"))
 ```
 
 `call_on_each_message` and `call_on_each_event` will automatically register
@@ -95,17 +85,13 @@ zulip(config).then((client) => {
 
 ## Arguments
 
-{generate_api_arguments_table|arguments.json|get-events-from-queue.md}
+{generate_api_arguments_table|zulip.yaml|/events:get}
 
 **Note**: The arguments documented above are optional in the sense that
 even if you haven't registered a queue by explicitly requesting the
 `{{ api_url}}/v1/register` endpoint, you could pass the arguments for
 [the `{{ api_url}}/v1/register` endpoint](/api/register-queue) to this
 endpoint and a queue would be registered in the absence of a `queue_id`.
-
-You may also pass in the following keyword arguments to `call_on_each_event`:
-
-{generate_api_arguments_table|arguments.json|call_on_each_event}
 
 ## Response
 
@@ -119,4 +105,17 @@ You may also pass in the following keyword arguments to `call_on_each_event`:
 
 A typical successful JSON response may look like:
 
-{generate_code_example|get-events-from-queue|fixture}
+{generate_code_example|/events:get|fixture(200)}
+
+#### BAD_EVENT_QUEUE_ID errors
+
+If the target event queue has been garbage collected, you'll get the
+following error response:
+
+{generate_code_example|/events:get|fixture(400)}
+
+A compliant client will handle this error by re-initializing itself
+(e.g. a Zulip webapp browser window will reload in this case).
+
+See [the /register endpoint docs](/api/register-queue) for details on how to
+handle these correctly.

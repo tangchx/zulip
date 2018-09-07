@@ -1,12 +1,26 @@
-# We hear you like APIs...
+# The Zulip API
 
-We have a [well-documented API](/api) that allows you to build
-custom integrations, in addition to our [existing integrations](/integrations).
-For ease-of-use, we've created a Python module that you can drop in to a
-project to start interacting with our API. There is also a
-[JavaScript library](https://github.com/zulip/zulip-js) that can be used
-either in the browser or in Node.js.
+Zulip's APIs allow you to integrate other services with Zulip.  This
+guide should help you find the API you need:
 
-**Don't want to make it yourself?** Zulip [already integrates with lots of services](/integrations).
+* First, check if the tool you'd like to integrate with Zulip
+  [already has a native integration](/integrations).
+* Next, check if [Zapier](https://zapier.com/apps) or
+  [IFTTT](https://ifttt.com/search) has an integration.
+  [Zulip's Zapier integration](/integrations/doc/zapier) and
+  [Zulip's IFTTT integration](/integrations/doc/ifttt) often allow
+  integrating a new service with Zulip without writing any code.
+* If you'd like to send content into Zulip, you can
+  [write a native incoming webhook integration](/api/incoming-webhooks-overview)
+  or use [Zulip's API for sending messages](/api/send-message).
+* If you're building an interactive bot that reacts to activity inside
+  Zulip, you'll want to look at Zulip's
+  [Python framework for interactive bots](/api/running-bots) or
+  [Zulip's real-time events API](/api/get-events-from-queue).
 
-{{ render_markdown_path("zerver/api/sidebar.md") }}
+And if you still need to build your own integration with Zulip, check out
+the full [REST API](/api/rest), generally starting with
+[installing the API client bindings](/api/installation-instructions).
+
+In case you already know how you want to build your integration and you're
+just looking for an API key, we've got you covered [here](/api/api-keys).

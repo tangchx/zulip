@@ -1,5 +1,5 @@
 # Webhooks pfor external integrations.
-from typing import Any, Dict, Text
+from typing import Any, Dict
 
 import ujson
 from django.http import HttpRequest, HttpResponse
@@ -8,7 +8,8 @@ from django.utils.translation import ugettext as _
 from zerver.decorator import api_key_only_webhook_view
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_error, json_success
-from zerver.lib.webhooks.common import check_send_webhook_message
+from zerver.lib.webhooks.common import check_send_webhook_message, \
+    UnexpectedWebhookEventType
 from zerver.models import UserProfile
 
 PINGDOM_SUBJECT_TEMPLATE = '{name} status.'
@@ -41,17 +42,17 @@ def api_pingdom_webhook(request: HttpRequest, user_profile: UserProfile,
         subject = get_subject_for_http_request(payload)
         body = get_body_for_http_request(payload)
     else:
-        return json_error(_('Unsupported check_type: {check_type}').format(check_type=check_type))
+        raise UnexpectedWebhookEventType('Pingdom', check_type)
 
     check_send_webhook_message(request, user_profile, subject, body)
     return json_success()
 
 
-def get_subject_for_http_request(payload: Dict[str, Any]) -> Text:
+def get_subject_for_http_request(payload: Dict[str, Any]) -> str:
     return PINGDOM_SUBJECT_TEMPLATE.format(name=payload['check_name'])
 
 
-def get_body_for_http_request(payload: Dict[str, Any]) -> Text:
+def get_body_for_http_request(payload: Dict[str, Any]) -> str:
     current_state = payload['current_state']
     previous_state = payload['previous_state']
 
@@ -68,5 +69,5 @@ def get_body_for_http_request(payload: Dict[str, Any]) -> Text:
     return body
 
 
-def get_check_type(payload: Dict[str, Any]) -> Text:
+def get_check_type(payload: Dict[str, Any]) -> str:
     return payload['check_type']

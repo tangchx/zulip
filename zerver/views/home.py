@@ -1,4 +1,4 @@
-from typing import Any, List, Dict, Optional, Text, Iterator
+from typing import Any, List, Dict, Optional, Iterator
 
 from django.conf import settings
 from django.urls import reverse
@@ -8,25 +8,28 @@ from django.utils import translation
 from django.utils.cache import patch_cache_control
 from itertools import zip_longest
 
-from zerver.decorator import zulip_login_required, process_client
+from zerver.context_processors import get_realm_from_request
+from zerver.decorator import zulip_login_required, process_client, \
+    redirect_to_login
 from zerver.forms import ToSForm
 from zerver.lib.realm_icon import realm_icon_url
 from zerver.models import Message, UserProfile, Stream, Subscription, Huddle, \
     Recipient, Realm, UserMessage, DefaultStream, RealmEmoji, RealmDomain, \
     RealmFilter, PreregistrationUser, UserActivity, \
     UserPresence, get_stream_recipient, name_changes_disabled, email_to_username, \
-    get_realm_domains
+    get_realm_domains, get_usermessage_by_message_id
 from zerver.lib.events import do_events_register
 from zerver.lib.actions import update_user_presence, do_change_tos_version, \
-    do_update_pointer, realm_user_count
+    realm_user_count
 from zerver.lib.avatar import avatar_url
 from zerver.lib.i18n import get_language_list, get_language_name, \
-    get_language_list_for_templates
+    get_language_list_for_templates, get_language_translation_data
 from zerver.lib.json_encoder_for_html import JSONEncoderForHTML
 from zerver.lib.push_notifications import num_push_devices_for_user
 from zerver.lib.streams import access_stream_by_name
 from zerver.lib.subdomains import get_subdomain
-from zerver.lib.utils import statsd
+from zerver.lib.utils import statsd, generate_random_token
+from two_factor.utils import default_device
 
 import calendar
 import datetime
@@ -64,7 +67,7 @@ def sent_time_in_epoch_seconds(user_message: Optional[UserMessage]) -> Optional[
     # Return the epoch seconds in UTC.
     return calendar.timegm(user_message.message.pub_date.utctimetuple())
 
-def get_bot_types(user_profile: UserProfile) -> List[Dict[Text, object]]:
+def get_bot_types(user_profile: UserProfile) -> List[Dict[str, object]]:
     bot_types = []
     for type_id, name in UserProfile.BOT_TYPES.items():
         bot_types.append({
@@ -75,7 +78,8 @@ def get_bot_types(user_profile: UserProfile) -> List[Dict[Text, object]]:
     return bot_types
 
 def home(request: HttpRequest) -> HttpResponse:
-    if settings.DEVELOPMENT and os.path.exists('var/handlebars-templates/compile.error'):
+    if (settings.DEVELOPMENT and not settings.TEST_SUITE and
+            os.path.exists('var/handlebars-templates/compile.error')):
         response = render(request, 'zerver/handlebars_compilation_failed.html')
         response.status_code = 500
         return response
@@ -105,7 +109,7 @@ def home_real(request: HttpRequest) -> HttpResponse:
        int(settings.TOS_VERSION.split('.')[0]) > user_profile.major_tos_version():
         return accounts_accept_terms(request)
 
-    narrow = []  # type: List[List[Text]]
+    narrow = []  # type: List[List[str]]
     narrow_stream = None
     narrow_topic = request.GET.get("topic")
     if request.GET.get("stream"):
@@ -115,7 +119,7 @@ def home_real(request: HttpRequest) -> HttpResponse:
                 user_profile, narrow_stream_name)
             narrow = [["stream", narrow_stream.name]]
         except Exception:
-            logging.exception("Narrow parsing")
+            logging.exception("Narrow parsing exception", extra=dict(request=request))
         if narrow_stream is not None and narrow_topic is not None:
             narrow.append(["topic", narrow_topic])
 
@@ -155,21 +159,23 @@ def home_real(request: HttpRequest) -> HttpResponse:
     if user_profile.pointer == -1:
         latest_read = None
     else:
-        try:
-            latest_read = UserMessage.objects.get(user_profile=user_profile,
-                                                  message__id=user_profile.pointer)
-        except UserMessage.DoesNotExist:
+        latest_read = get_usermessage_by_message_id(user_profile, user_profile.pointer)
+        if latest_read is None:
             # Don't completely fail if your saved pointer ID is invalid
             logging.warning("%s has invalid pointer %s" % (user_profile.email, user_profile.pointer))
-            latest_read = None
 
-    # Set default language and make it persist
-    default_language = register_ret['default_language']
-    url_lang = '/{}'.format(request.LANGUAGE_CODE)
-    if not request.path.startswith(url_lang):
-        translation.activate(default_language)
-        request.session[translation.LANGUAGE_SESSION_KEY] = translation.get_language()
+    # We pick a language for the user as follows:
+    # * First priority is the language in the URL, for debugging.
+    # * If not in the URL, we use the language from the user's settings.
+    request_language = translation.get_language_from_path(request.path_info)
+    if request_language is None:
+        request_language = register_ret['default_language']
+    translation.activate(request_language)
+    # We also save the language to the user's session, so that
+    # something reasonable will happen in logged-in portico pages.
+    request.session[translation.LANGUAGE_SESSION_KEY] = translation.get_language()
 
+    two_fa_enabled = settings.TWO_FACTOR_AUTHENTICATION_ENABLED
     # Pass parameters to the client-side JavaScript code.
     # These end up in a global JavaScript Object named 'page_params'.
     page_params = dict(
@@ -191,6 +197,7 @@ def home_real(request: HttpRequest) -> HttpResponse:
         password_min_length = settings.PASSWORD_MIN_LENGTH,
         password_min_guesses  = settings.PASSWORD_MIN_GUESSES,
         jitsi_server_url      = settings.JITSI_SERVER_URL,
+        search_pills_enabled  = settings.SEARCH_PILLS_ENABLED,
 
         # Misc. extra data.
         have_initial_messages = user_has_messages,
@@ -204,6 +211,10 @@ def home_real(request: HttpRequest) -> HttpResponse:
         furthest_read_time    = sent_time_in_epoch_seconds(latest_read),
         has_mobile_devices    = num_push_devices_for_user(user_profile) > 0,
         bot_types             = get_bot_types(user_profile),
+        two_fa_enabled        = two_fa_enabled,
+        # Adding two_fa_enabled as condition saves us 3 queries when
+        # 2FA is not enabled.
+        two_fa_enabled_user   = two_fa_enabled and bool(default_device(user_profile)),
     )
 
     undesired_register_ret_fields = [
@@ -234,18 +245,36 @@ def home_real(request: HttpRequest) -> HttpResponse:
     # Some realms only allow admins to invite users
     if user_profile.realm.invite_by_admins_only and not user_profile.is_realm_admin:
         show_invites = False
+    if user_profile.is_guest:
+        show_invites = False
 
     request._log_data['extra'] = "[%s]" % (register_ret["queue_id"],)
-    response = render(request, 'zerver/index.html',
+
+    page_params['translation_data'] = {}
+    if request_language != 'en':
+        page_params['translation_data'] = get_language_translation_data(request_language)
+
+    csp_nonce = generate_random_token(48)
+    emojiset = user_profile.emojiset
+    if emojiset == UserProfile.TEXT_EMOJISET:
+        # If current emojiset is `TEXT_EMOJISET`, then fallback to
+        # GOOGLE_EMOJISET for picking which spritesheet's CSS to
+        # include (and thus how to display emojis in the emoji picker
+        # and composebox typeahead).
+        emojiset = UserProfile.GOOGLE_EMOJISET
+    response = render(request, 'zerver/app/index.html',
                       context={'user_profile': user_profile,
+                               'emojiset': emojiset,
                                'page_params': JSONEncoderForHTML().encode(page_params),
-                               'nofontface': is_buggy_ua(request.META.get("HTTP_USER_AGENT", "Unspecified")),
+                               'csp_nonce': csp_nonce,
                                'avatar_url': avatar_url(user_profile),
                                'show_debug':
                                settings.DEBUG and ('show_debug' in request.GET),
                                'pipeline': settings.PIPELINE_ENABLED,
+                               'search_pills_enabled': settings.SEARCH_PILLS_ENABLED,
                                'show_invites': show_invites,
                                'is_admin': user_profile.is_realm_admin,
+                               'is_guest': user_profile.is_guest,
                                'show_webathena': user_profile.realm.webathena_enabled,
                                'enable_feedback': settings.ENABLE_FEEDBACK,
                                'embedded': narrow_stream is not None,
@@ -257,17 +286,16 @@ def home_real(request: HttpRequest) -> HttpResponse:
 def desktop_home(request: HttpRequest) -> HttpResponse:
     return HttpResponseRedirect(reverse('zerver.views.home.home'))
 
-def apps_view(request: HttpRequest, _: Text) -> HttpResponse:
+def apps_view(request: HttpRequest, _: str) -> HttpResponse:
     if settings.ZILENCER_ENABLED:
         return render(request, 'zerver/apps.html')
     return HttpResponseRedirect('https://zulipchat.com/apps/', status=301)
 
-def is_buggy_ua(agent: str) -> bool:
-    """Discrimiate CSS served to clients based on User Agent
-
-    Due to QTBUG-3467, @font-face is not supported in QtWebKit.
-    This may get fixed in the future, but for right now we can
-    just serve the more conservative CSS to all our desktop apps.
-    """
-    return ("Zulip Desktop/" in agent or "ZulipDesktop/" in agent) and \
-        "Mac" not in agent
+def plans_view(request: HttpRequest) -> HttpResponse:
+    realm = get_realm_from_request(request)
+    if realm is not None:
+        if realm.plan_type == Realm.SELF_HOSTED:
+            return HttpResponseRedirect(reverse('zerver.views.home.home'))
+        if not request.user.is_authenticated():
+            return redirect_to_login(next="plans")
+    return render(request, "zerver/plans.html")

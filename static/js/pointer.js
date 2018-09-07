@@ -112,7 +112,7 @@ exports.initialize = function initialize() {
             } else {
                 messages = event.msg_list.message_range(event.previously_selected, event.id);
             }
-            unread_ops.mark_messages_as_read(messages, {from: 'pointer'});
+            unread_ops.notify_server_messages_read(messages, {from: 'pointer'});
         }
     });
 };
@@ -122,3 +122,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = pointer;
 }
+window.pointer = pointer;

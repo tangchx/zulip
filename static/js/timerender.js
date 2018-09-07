@@ -36,7 +36,7 @@ exports.render_now = function (time, today) {
     var days_old = Math.round(start_of_other_day.diffDays(start_of_today));
 
     var is_older_year =
-        (start_of_today.getFullYear() - start_of_other_day.getFullYear()) > 0;
+        start_of_today.getFullYear() - start_of_other_day.getFullYear() > 0;
 
     if (days_old === 0) {
         time_str = i18n.t("Today");
@@ -65,35 +65,35 @@ exports.render_now = function (time, today) {
 // Current date is passed as an argument for unit testing
 exports.last_seen_status_from_date = function (last_active_date, current_date) {
     if (typeof  current_date === 'undefined') {
-         current_date = new XDate();
+        current_date = new XDate();
     }
 
     var minutes = Math.floor(last_active_date.diffMinutes(current_date));
     if (minutes <= 2) {
-        return i18n.t("Last seen just now");
+        return i18n.t("Just now");
     }
     if (minutes < 60) {
-        return i18n.t("Last seen __minutes__ minutes ago", {minutes: minutes});
+        return i18n.t("__minutes__ minutes ago", {minutes: minutes});
     }
 
     var hours = Math.floor(minutes / 60);
     if (hours === 1) {
-         return i18n.t("Last seen an hour ago");
+        return i18n.t("An hour ago");
     }
     if (hours < 24) {
-        return i18n.t("Last seen __hours__ hours ago", {hours: hours});
+        return i18n.t("__hours__ hours ago", {hours: hours});
     }
 
     var days = Math.floor(hours / 24);
     if (days === 1) {
-        return [i18n.t("Last seen yesterday")];
+        return [i18n.t("Yesterday")];
     }
     if (days < 365) {
-        return i18n.t("Last seen on __last_active__",
+        return i18n.t("On __last_active__",
                       {last_active: last_active_date.toString("MMM\xa0dd")});
     }
 
-    return i18n.t("Last seen on __last_active_date__",
+    return i18n.t("On __last_active_date__",
                   {last_active_date: last_active_date.toString("MMM\xa0dd,\xa0yyyy")});
 };
 
@@ -105,9 +105,9 @@ var update_list = [];
 // The time at the beginning of the next day, when the timestamps are updated.
 // Represented as an XDate with hour, minute, second, millisecond 0.
 var next_update;
-$(function () {
+exports.initialize = function () {
     next_update = set_to_start_of_day(new XDate()).addDays(1);
-});
+};
 
 // time_above is an optional argument, to support dates that look like:
 // --- ▲ Yesterday ▲ ------ ▼ Today ▼ ---
@@ -155,10 +155,10 @@ exports.render_date = function (time, time_above, today) {
         node = render_date_span(node, rendered_time);
     }
     maybe_add_update_list_entry({
-      needs_update: rendered_time.needs_update,
-      className: className,
-      time: time,
-      time_above: time_above,
+        needs_update: rendered_time.needs_update,
+        className: className,
+        time: time,
+        time_above: time_above,
     });
     return node;
 };
@@ -220,8 +220,10 @@ exports.stringify_time = function (time) {
 // this is for rendering absolute time based off the preferences for twenty-four
 // hour time in the format of "%mmm %d, %h:%m %p".
 exports.absolute_time = (function () {
-    var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var MONTHS = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
 
     var fmt_time = function (date, H_24) {
         var payload = {
@@ -245,10 +247,10 @@ exports.absolute_time = (function () {
 
     return function (timestamp, today) {
         if (typeof today === 'undefined') {
-             today = new Date();
+            today = new Date();
         }
         var date = new Date(timestamp);
-        var is_older_year = (today.getFullYear() - date.getFullYear()) > 0;
+        var is_older_year = today.getFullYear() - date.getFullYear() > 0;
         var H_24 = page_params.twenty_four_hour_time;
         var str = MONTHS[date.getMonth()] + " " + date.getDate();
         // include year if message date is from a previous year
@@ -276,7 +278,7 @@ exports.set_full_datetime = function timerender_set_full_datetime(message, time_
 
     message.full_date_str = time.toLocaleDateString();
     message.full_time_str = time.toLocaleTimeString() +
-        ' (UTC' + ((tz_offset < 0) ? '' : '+') + tz_offset + ')';
+        ' (UTC' + (tz_offset < 0 ? '' : '+') + tz_offset + ')';
 
     time_elem.attr('title', message.full_date_str + ' ' + message.full_time_str);
 };
@@ -287,3 +289,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = timerender;
 }
+window.timerender = timerender;

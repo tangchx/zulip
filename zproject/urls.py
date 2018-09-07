@@ -19,6 +19,7 @@ from django.contrib.auth.views import (login, password_reset_done,
 import zerver.tornado.views
 import zerver.views
 import zerver.views.auth
+import zerver.views.archive
 import zerver.views.compatibility
 import zerver.views.home
 import zerver.views.email_mirror
@@ -105,6 +106,7 @@ v1_api_and_json_patterns = [
     # realm/profile_fields -> zerver.views.custom_profile_fields
     url(r'^realm/profile_fields$', rest_dispatch,
         {'GET': 'zerver.views.custom_profile_fields.list_realm_custom_profile_fields',
+         'PATCH': 'zerver.views.custom_profile_fields.reorder_realm_custom_profile_fields',
          'POST': 'zerver.views.custom_profile_fields.create_realm_custom_profile_field'}),
     url(r'^realm/profile_fields/(?P<field_id>\d+)$', rest_dispatch,
         {'PATCH': 'zerver.views.custom_profile_fields.update_realm_custom_profile_field',
@@ -124,19 +126,19 @@ v1_api_and_json_patterns = [
     url(r'^users$', rest_dispatch,
         {'GET': 'zerver.views.users.get_members_backend',
          'POST': 'zerver.views.users.create_user_backend'}),
-    url(r'^users/(?!me/)(?P<email>[^/]*)/reactivate$', rest_dispatch,
+    url(r'^users/(?P<user_id>[0-9]+)/reactivate$', rest_dispatch,
         {'POST': 'zerver.views.users.reactivate_user_backend'}),
     url(r'^users/(?!me/)(?P<email>[^/]*)/presence$', rest_dispatch,
         {'GET': 'zerver.views.presence.get_presence_backend'}),
-    url(r'^users/(?!me$)(?P<email>[^/]*)$', rest_dispatch,
+    url(r'^users/(?P<user_id>[0-9]+)$', rest_dispatch,
         {'PATCH': 'zerver.views.users.update_user_backend',
          'DELETE': 'zerver.views.users.deactivate_user_backend'}),
     url(r'^bots$', rest_dispatch,
         {'GET': 'zerver.views.users.get_bots_backend',
          'POST': 'zerver.views.users.add_bot_backend'}),
-    url(r'^bots/(?!me/)(?P<email>[^/]*)/api_key/regenerate$', rest_dispatch,
+    url(r'^bots/(?P<bot_id>[0-9]+)/api_key/regenerate$', rest_dispatch,
         {'POST': 'zerver.views.users.regenerate_bot_api_key'}),
-    url(r'^bots/(?!me/)(?P<email>[^/]*)$', rest_dispatch,
+    url(r'^bots/(?P<bot_id>[0-9]+)$', rest_dispatch,
         {'PATCH': 'zerver.views.users.patch_bot_backend',
          'DELETE': 'zerver.views.users.deactivate_bot_backend'}),
 
@@ -159,6 +161,9 @@ v1_api_and_json_patterns = [
         {'POST': 'zerver.views.messages.mark_stream_as_read'}),
     url(r'^mark_topic_as_read$', rest_dispatch,
         {'POST': 'zerver.views.messages.mark_topic_as_read'}),
+
+    url(r'^zcommand$', rest_dispatch,
+        {'POST': 'zerver.views.messages.zcommand_backend'}),
 
     # messages -> zerver.views.messages
     # GET returns messages, possibly filtered, POST sends a message
@@ -184,6 +189,10 @@ v1_api_and_json_patterns = [
 
     url(r'users/me/subscriptions/(?P<stream_id>\d+)$', rest_dispatch,
         {'PATCH': 'zerver.views.streams.update_subscriptions_property'}),
+
+    url(r'^submessage$',
+        rest_dispatch,
+        {'POST': 'zerver.views.submessage.process_submessage'}),
 
     # New endpoint for handling reactions.
     url(r'^messages/(?P<message_id>[0-9]+)/reactions$',
@@ -242,6 +251,8 @@ v1_api_and_json_patterns = [
          'DELETE': 'zerver.views.push_notifications.remove_android_reg_id'}),
 
     # user_groups -> zerver.views.user_groups
+    url(r'^user_groups$', rest_dispatch,
+        {'GET': 'zerver.views.user_groups.get_user_group'}),
     url(r'^user_groups/create$', rest_dispatch,
         {'POST': 'zerver.views.user_groups.add_user_group'}),
     url(r'^user_groups/(?P<user_group_id>\d+)$', rest_dispatch,
@@ -274,8 +285,6 @@ v1_api_and_json_patterns = [
         {'PATCH': 'zerver.views.user_settings.update_display_settings_backend'}),
     url(r'^settings/notifications$', rest_dispatch,
         {'PATCH': 'zerver.views.user_settings.json_change_notify_settings'}),
-    url(r'^settings/ui$', rest_dispatch,
-        {'PATCH': 'zerver.views.user_settings.json_change_ui_settings'}),
 
     # users/me/alert_words -> zerver.views.alert_words
     url(r'^users/me/alert_words$', rest_dispatch,
@@ -285,7 +294,8 @@ v1_api_and_json_patterns = [
 
     # users/me/custom_profile_data -> zerver.views.custom_profile_data
     url(r'^users/me/profile_data$', rest_dispatch,
-        {'PATCH': 'zerver.views.custom_profile_fields.update_user_custom_profile_data'}),
+        {'PATCH': 'zerver.views.custom_profile_fields.update_user_custom_profile_data',
+         'DELETE': 'zerver.views.custom_profile_fields.remove_user_custom_profile_data'}),
 
     url(r'^users/me/(?P<stream_id>\d+)/topics$', rest_dispatch,
         {'GET': 'zerver.views.streams.get_topics_backend'}),
@@ -332,7 +342,7 @@ v1_api_and_json_patterns = [
 
     # events -> zerver.tornado.views
     url(r'^events$', rest_dispatch,
-        {'GET': 'zerver.tornado.views.get_events_backend',
+        {'GET': 'zerver.tornado.views.get_events',
          'DELETE': 'zerver.tornado.views.cleanup_event_queue'}),
 
     # report -> zerver.views.report
@@ -404,9 +414,9 @@ i18n_urls = [
         name='zerver.views.auth.show_deactivation_notice'),
 
     # Avatar
-    url(r'^avatar/(?P<email_or_id>[\S]+)?/(?P<medium>[\S]+)?', zerver.views.users.avatar,
+    url(r'^avatar/(?P<email_or_id>[\S]+)/(?P<medium>[\S]+)?', zerver.views.users.avatar,
         name='zerver.views.users.avatar'),
-    url(r'^avatar/(?P<email_or_id>[\S]+)?', zerver.views.users.avatar,
+    url(r'^avatar/(?P<email_or_id>[\S]+)', zerver.views.users.avatar,
         name='zerver.views.users.avatar'),
 
     # Registration views, require a confirmation ID.
@@ -417,7 +427,10 @@ i18n_urls = [
         name='zerver.views.registration.accounts_home'),
     url(r'^accounts/send_confirm/(?P<email>[\S]+)?',
         TemplateView.as_view(template_name='zerver/accounts_send_confirm.html'),
-        name='send_confirm'),
+        name='signup_send_confirm'),
+    url(r'^accounts/new/send_confirm/(?P<email>[\S]+)?',
+        TemplateView.as_view(template_name='zerver/accounts_send_confirm.html'),
+        {'realm_creation': True}, name='new_realm_send_confirm'),
     url(r'^accounts/register/', zerver.views.registration.accounts_register,
         name='zerver.views.registration.accounts_register'),
     url(r'^accounts/do_confirm/(?P<confirmation_key>[\w]+)',
@@ -448,6 +461,14 @@ i18n_urls = [
     url(r'^new/(?P<creation_key>[\w]+)$',
         zerver.views.registration.create_realm, name='zerver.views.create_realm'),
 
+    # Global public streams (Zulip's way of doing archives)
+    url(r'^archive/streams/(?P<stream_id>\d+)/topics/(?P<topic_name>[^/]+)$',
+        zerver.views.archive.archive,
+        name='zerver.views.archive.archive'),
+    url(r'^archive/streams/(?P<stream_id>\d+)/topics$',
+        zerver.views.archive.get_web_public_topics_backend,
+        name='zerver.views.archive.get_web_public_topics_backend'),
+
     # Login/registration
     url(r'^register/$', zerver.views.registration.accounts_home, name='register'),
     url(r'^login/$', zerver.views.auth.login_page, {'template_name': 'zerver/login.html'},
@@ -465,7 +486,7 @@ i18n_urls = [
     url(r'^team/$', zerver.views.users.team_view),
     url(r'^history/$', TemplateView.as_view(template_name='zerver/history.html')),
     url(r'^apps/(.*)', zerver.views.home.apps_view, name='zerver.views.home.apps_view'),
-    url(r'^plans/$', TemplateView.as_view(template_name='zerver/plans.html'), name='plans'),
+    url(r'^plans/$', zerver.views.home.plans_view, name='plans'),
 
     # Landing page, features pages, signup form, etc.
     url(r'^hello/$', TemplateView.as_view(template_name='zerver/hello.html'), name='landing-page'),
@@ -522,6 +543,16 @@ urls += url(r'^user_uploads/(?P<realm_id_str>(\d*|unk))/(?P<filename>.*)',
             rest_dispatch,
             {'GET': ('zerver.views.upload.serve_file_backend',
                      {'override_api_url_scheme'})}),
+# This endpoint serves thumbnailed versions of images using thumbor;
+# it requires an exception for the same reason.
+urls += url(r'^thumbnail', rest_dispatch,
+            {'GET': ('zerver.views.thumbnail.backend_serve_thumbnail',
+                     {'override_api_url_scheme'})}),
+
+# This url serves as a way to recieve CSP violation reports from the users.
+# We use this endpoint to just log these reports.
+urls += url(r'^report/csp_violations$', zerver.views.report.report_csp_violations,
+            name='zerver.views.report.report_csp_violations'),
 
 # Incoming webhook URLs
 # We don't create urls for particular git integrations here
@@ -560,8 +591,8 @@ urls += [
     url(r'^api/v1/dev_fetch_api_key$', zerver.views.auth.api_dev_fetch_api_key,
         name='zerver.views.auth.api_dev_fetch_api_key'),
     # This is for fetching the emails of the admins and the users.
-    url(r'^api/v1/dev_get_emails$', zerver.views.auth.api_dev_get_emails,
-        name='zerver.views.auth.api_dev_get_emails'),
+    url(r'^api/v1/dev_list_users$', zerver.views.auth.api_dev_list_users,
+        name='zerver.views.auth.api_dev_list_users'),
 
     # Used to present the GOOGLE_CLIENT_ID to mobile apps
     url(r'^api/v1/fetch_google_client_id$',
@@ -587,6 +618,7 @@ for app_name in settings.EXTRA_INSTALLED_APPS:
 urls += [
     # Used internally for communication between Django and Tornado processes
     url(r'^notify_tornado$', zerver.tornado.views.notify, name='zerver.tornado.views.notify'),
+    url(r'^api/v1/events/internal$', zerver.tornado.views.get_events_internal),
 ]
 
 # Python Social Auth
@@ -594,15 +626,16 @@ urls += [url(r'^', include('social_django.urls', namespace='social'))]
 
 # User documentation site
 urls += [url(r'^help/(?P<article>.*)$',
-             MarkdownDirectoryView.as_view(template_name='zerver/help/main.html',
+             MarkdownDirectoryView.as_view(template_name='zerver/documentation_main.html',
                                            path_template='/zerver/help/%s.md'))]
 urls += [url(r'^api/(?P<article>[-\w]*\/?)$',
-             MarkdownDirectoryView.as_view(template_name='zerver/api/main.html',
+             MarkdownDirectoryView.as_view(template_name='zerver/documentation_main.html',
                                            path_template='/zerver/api/%s.md'))]
 
 # Two Factor urls
 if settings.TWO_FACTOR_AUTHENTICATION_ENABLED:
-    urls += [url(r'', include(tf_urls + tf_twilio_urls, namespace='two_factor'))]
+    urls += [url(r'', include(tf_urls)),
+             url(r'', include(tf_twilio_urls))]
 
 if settings.DEVELOPMENT:
     urls += dev_urls.urls

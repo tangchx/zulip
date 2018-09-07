@@ -1,7 +1,7 @@
 # Webhooks for external integrations.
 import time
 from datetime import datetime
-from typing import Any, Dict, Optional, Text
+from typing import Any, Dict, Optional
 
 from django.http import HttpRequest, HttpResponse
 from django.utils.translation import ugettext as _
@@ -9,14 +9,15 @@ from django.utils.translation import ugettext as _
 from zerver.decorator import api_key_only_webhook_view
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_error, json_success
-from zerver.lib.webhooks.common import check_send_webhook_message
+from zerver.lib.webhooks.common import check_send_webhook_message, \
+    UnexpectedWebhookEventType
 from zerver.models import UserProfile
 
 @api_key_only_webhook_view('Stripe')
 @has_request_variables
 def api_stripe_webhook(request: HttpRequest, user_profile: UserProfile,
                        payload: Dict[str, Any]=REQ(argument_type='body'),
-                       stream: Text=REQ(default='test')) -> HttpResponse:
+                       stream: str=REQ(default='test')) -> HttpResponse:
     body = None
     event_type = payload["type"]
     data_object = payload["data"]["object"]
@@ -158,7 +159,7 @@ def api_stripe_webhook(request: HttpRequest, user_profile: UserProfile,
         topic = "Transfer {}".format(object_id)
 
     if body is None:
-        return json_error(_("We don't support {} event".format(event_type)))
+        raise UnexpectedWebhookEventType('Stripe', event_type)
 
     check_send_webhook_message(request, user_profile, topic, body)
 

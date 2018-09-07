@@ -3,7 +3,7 @@ import datetime
 import time
 
 from django.conf import settings
-from typing import Any, Dict, Text
+from typing import Any, Dict
 
 from django.http import HttpRequest, HttpResponse
 from django.utils.timezone import now as timezone_now
@@ -15,19 +15,17 @@ from zerver.lib.request import has_request_variables, REQ, JsonableError
 from zerver.lib.response import json_success, json_error
 from zerver.lib.timestamp import datetime_to_timestamp
 from zerver.lib.validator import check_bool
-from zerver.models import UserActivity, UserPresence, UserProfile, get_user
+from zerver.models import UserActivity, UserPresence, UserProfile, get_active_user
 
 def get_status_list(requesting_user_profile: UserProfile) -> Dict[str, Any]:
     return {'presences': get_status_dict(requesting_user_profile),
             'server_timestamp': time.time()}
 
 def get_presence_backend(request: HttpRequest, user_profile: UserProfile,
-                         email: Text) -> HttpResponse:
+                         email: str) -> HttpResponse:
     try:
-        target = get_user(email, user_profile.realm)
+        target = get_active_user(email, user_profile.realm)
     except UserProfile.DoesNotExist:
-        return json_error(_('No such user'))
-    if not target.is_active:
         return json_error(_('No such user'))
     if target.is_bot:
         return json_error(_('Presence is not supported for bot users.'))
@@ -72,7 +70,7 @@ def update_active_status_backend(request: HttpRequest, user_profile: UserProfile
         # (running as their user) has been active.
         try:
             activity = UserActivity.objects.get(user_profile = user_profile,
-                                                query="get_events_backend",
+                                                query="get_events",
                                                 client__name="zephyr_mirror")
 
             ret['zephyr_mirror_active'] = \

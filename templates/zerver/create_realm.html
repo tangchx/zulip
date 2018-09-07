@@ -4,7 +4,7 @@
 {# This is where we pitch the app and solicit signups. #}
 
 {% block portico_content %}
-<script type="text/javascript">
+<script>
 $(function () {
     common.autofocus('#email');
 });
@@ -18,24 +18,28 @@ $(function () {
                 <h1 class="get-started">{{ _("Create a new Zulip organization") }}</h1>
             </div>
             <form class="form-inline" id="send_confirm" name="email_form"
-                action="{{ current_url() }}" method="post">
+              action="{{ current_url() }}" method="post">
                 {{ csrf_input }}
                 <div class="input-box horizontal">
                     <div class="inline-block relative">
                         <input type="text" class="email required" placeholder="{{ _("Enter your email address") }}"
-                               id="email" name="email" required />
-                        <label for="id_username">{{ _('Email') }}</label>
+                          id="email" name="email" required />
+                        <label for="email">{{ _('Email') }}</label>
                     </div>
 
                     <button type="submit" class="new-organization-button register-button">{{ _("Create organization") }}</button>
                 </div>
             </form>
-            <div class="alert alert-error"></div>
+            <div class="alert alert-error email-frontend-error"></div>
             {% if form.email.errors %}
                 {% for error in form.email.errors %}
                 <div class="alert alert-error">{{ error }}</div>
                 {% endfor %}
             {% endif %}
+            <div class="bottom-text">
+                Or import from <a href="/help/import-from-slack">Slack</a> or
+                <a href="/help/import-from-gitter">Gitter</a>.
+            </div>
         </div>
     </div>
 </div>

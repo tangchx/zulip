@@ -20,12 +20,12 @@ function is_mobile(device) {
     return MOBILE_DEVICES.indexOf(device) !== -1;
 }
 
-exports.is_not_offline = function (user_id) {
+exports.is_active = function (user_id) {
     var presence_info = exports.presence_info;
 
     if (presence_info[user_id]) {
         var status = presence_info[user_id].status;
-        if (status && (status !== 'offline')) {
+        if (status && status === "active") {
             return true;
         }
     }
@@ -62,26 +62,26 @@ function status_from_timestamp(baseline_time, info) {
         }
         if (age < OFFLINE_THRESHOLD_SECS) {
             switch (device_presence.status) {
-                case 'active':
-                    if (is_mobile(device)) {
-                        mobileAvailable = true;
-                    } else {
-                        nonmobileAvailable = true;
-                    }
+            case 'active':
+                if (is_mobile(device)) {
+                    mobileAvailable = true;
+                } else {
+                    nonmobileAvailable = true;
+                }
+                status = device_presence.status;
+                break;
+            case 'idle':
+                if (status !== 'active') {
                     status = device_presence.status;
-                    break;
-                case 'idle':
-                    if (status !== 'active') {
-                        status = device_presence.status;
-                    }
-                    break;
-                case 'offline':
-                    if (status !== 'active' && status !== 'idle') {
-                        status = device_presence.status;
-                    }
-                    break;
-                default:
-                    blueslip.error('Unexpected status', {presence_object: device_presence, device: device}, undefined);
+                }
+                break;
+            case 'offline':
+                if (status !== 'active' && status !== 'idle') {
+                    status = device_presence.status;
+                }
+                break;
+            default:
+                blueslip.error('Unexpected status', {presence_object: device_presence, device: device}, undefined);
             }
         }
     });
@@ -104,7 +104,7 @@ exports.set_info = function (presences, server_timestamp) {
         if (!people.is_current_user(this_email)) {
             var person = people.get_by_email(this_email);
             if (person === undefined) {
-                if (!server_events.suspect_offline) {
+                if (!(server_events.suspect_offline || reload_state.is_in_progress())) {
                     // If we're online, and we get a user who we don't
                     // know about in the presence data, throw an error.
                     blueslip.error('Unknown email in presence data: ' + this_email);
@@ -179,3 +179,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = presence;
 }
+window.presence = presence;

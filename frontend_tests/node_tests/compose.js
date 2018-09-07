@@ -1,56 +1,72 @@
-set_global('$', global.make_zjquery());
-set_global('i18n', global.stub_i18n);
-
-set_global('page_params', {
-});
-set_global('navigator', {
-    userAgent: '',
-});
-
-set_global('document', {
-    getElementById: function () { return $('#compose-textarea'); },
-    execCommand: function () { return false; },
-    location: {},
-});
-set_global('transmit', {});
-set_global('window', {
+global.patch_builtin('window', {
     bridge: false,
 });
-set_global('channel', {});
-set_global('templates', {});
+
+set_global('blueslip', global.make_zblueslip({
+    error: false, // Ignore errors. We only check for warnings in this module.
+}));
 
 var noop = function () {};
 
-set_global('blueslip', {});
-set_global('drafts', {
+set_global('$', global.make_zjquery());
+set_global('i18n', global.stub_i18n);
+
+const _navigator = {
+    userAgent: '',
+};
+
+const _document = {
+    getElementById: function () { return $('#compose-textarea'); },
+    execCommand: function () { return false; },
+    location: {},
+};
+
+const _drafts = {
     delete_draft_after_send: noop,
-});
-set_global('resize', {
+};
+const _resize = {
     resize_bottom_whitespace: noop,
-});
-set_global('feature_flags', {
-    resize_bottom_whitespace: noop,
-});
+};
+
+const _sent_messages = {
+    start_tracking_message: noop,
+};
+const _notifications = {
+    notify_above_composebox: noop,
+    clear_compose_notifications: noop,
+};
+const _reminder = {
+    is_deferred_delivery: noop,
+};
+
+set_global('document', _document);
+set_global('drafts', _drafts);
+set_global('navigator', _navigator);
+set_global('notifications', _notifications);
+set_global('reminder', _reminder);
+set_global('resize', _resize);
+set_global('sent_messages', _sent_messages);
+
+set_global('transmit', {});
+set_global('channel', {});
+set_global('templates', {});
 set_global('echo', {});
 set_global('stream_edit', {});
 set_global('markdown', {});
 set_global('loading', {});
-
-set_global('sent_messages', {
-    start_tracking_message: noop,
-});
-set_global('notifications', {
-    notify_above_composebox: noop,
-    clear_compose_notifications: noop,
-});
+set_global('page_params', {});
+set_global('subs', {});
+set_global('ui_util', {});
 
 // Setting these up so that we can test that links to uploads within messages are
 // automatically converted to server relative links.
 global.document.location.protocol = 'https:';
 global.document.location.host = 'foo.com';
 
+zrequire('zcommand');
 zrequire('compose_ui');
 zrequire('util');
+zrequire('rtl');
 zrequire('common');
 zrequire('Handlebars', 'handlebars');
 zrequire('stream_data');
@@ -62,10 +78,15 @@ zrequire('compose_pm_pill');
 zrequire('compose');
 zrequire('upload');
 
+people.small_avatar_url_for_person = function () {
+    return 'http://example.com/example.png';
+};
+
 var me = {
     email: 'me@example.com',
     user_id: 30,
     full_name: 'Me Myself',
+    date_joined: new Date(),
 };
 
 var alice = {
@@ -86,7 +107,7 @@ people.initialize_current_user(me.user_id);
 people.add(alice);
 people.add(bob);
 
-(function test_validate_stream_message_address_info() {
+run_test('validate_stream_message_address_info', () => {
     var sub = {
         stream_id: 101,
         name: 'social',
@@ -101,10 +122,14 @@ people.add(bob);
 
     sub.subscribed = false;
     stream_data.add_sub('social', sub);
+    templates.render = function (template_name) {
+        assert.equal(template_name, 'compose_not_subscribed');
+        return 'compose_not_subscribed_stub';
+    };
     assert(!compose.validate_stream_message_address_info('social'));
-    assert.equal($('#compose-error-msg').html(), "translated: <p>You're not subscribed to the stream <b>social</b>.</p><p>Manage your subscriptions <a href='#streams/all'>on your Streams page</a>.</p>");
+    assert.equal($('#compose-error-msg').html(), 'compose_not_subscribed_stub');
 
-    global.page_params.narrow_stream = false;
+    page_params.narrow_stream = false;
     channel.post = function (payload) {
         assert.equal(payload.data.stream, 'social');
         payload.data.subscribed = true;
@@ -121,7 +146,7 @@ people.add(bob);
         payload.success(payload.data);
     };
     assert(!compose.validate_stream_message_address_info('Frontend'));
-    assert.equal($('#compose-error-msg').html(), "translated: <p>You're not subscribed to the stream <b>Frontend</b>.</p><p>Manage your subscriptions <a href='#streams/all'>on your Streams page</a>.</p>");
+    assert.equal($('#compose-error-msg').html(), 'compose_not_subscribed_stub');
 
     channel.post = function (payload) {
         assert.equal(payload.data.stream, 'Frontend');
@@ -136,9 +161,9 @@ people.add(bob);
     };
     assert(!compose.validate_stream_message_address_info('social'));
     assert.equal($('#compose-error-msg').html(), i18n.t("Error checking subscription"));
-}());
+});
 
-(function test_validate() {
+run_test('validate', () => {
     function initialize_pm_pill() {
         set_global('$', global.make_zjquery());
 
@@ -155,19 +180,15 @@ people.add(bob);
 
         compose_pm_pill.initialize();
 
-        set_global('ui_util', {
-            place_caret_at_end: noop,
-        });
+        ui_util.place_caret_at_end = noop;
 
         $("#zephyr-mirror-error").is = noop;
         $("#private_message_recipient").select(noop);
 
-        set_global('templates', {
-            render: function (fn) {
-                assert.equal(fn, 'input_pill');
-                return '<div>pill-html</div>';
-            },
-        });
+        templates.render = function (fn) {
+            assert.equal(fn, 'input_pill');
+            return '<div>pill-html</div>';
+        };
     }
 
     function add_content_to_compose_box() {
@@ -180,6 +201,11 @@ people.add(bob);
     assert(!$("#compose-send-button").is_focused());
     assert.equal($("#compose-send-button").prop('disabled'), false);
     assert.equal($('#compose-error-msg').html(), i18n.t('You have nothing to send!'));
+
+    reminder.is_deferred_delivery = () => true;
+    compose.validate();
+    assert.equal($('#sending-indicator').html(), 'translated: Scheduling...');
+    reminder.is_deferred_delivery = noop;
 
     add_content_to_compose_box();
     var zephyr_checked = false;
@@ -197,7 +223,9 @@ people.add(bob);
     initialize_pm_pill();
     add_content_to_compose_box();
 
+    // test validating private messages
     compose_state.set_message_type('private');
+
     compose_state.recipient('');
     assert(!compose.validate());
     assert.equal($('#compose-error-msg').html(), i18n.t('Please specify at least one valid recipient'));
@@ -219,6 +247,10 @@ people.add(bob);
     compose_state.recipient('bob@example.com');
     assert(compose.validate());
 
+    page_params.realm_is_zephyr_mirror_realm = true;
+    assert(compose.validate());
+    page_params.realm_is_zephyr_mirror_realm = false;
+
     compose_state.set_message_type('stream');
     compose_state.stream_name('');
     $("#stream").select(noop);
@@ -226,32 +258,32 @@ people.add(bob);
     assert.equal($('#compose-error-msg').html(), i18n.t('Please specify a stream'));
 
     compose_state.stream_name('Denmark');
-    global.page_params.realm_mandatory_topics = true;
+    page_params.realm_mandatory_topics = true;
     compose_state.subject('');
     $("#subject").select(noop);
     assert(!compose.validate());
     assert.equal($('#compose-error-msg').html(), i18n.t('Please specify a topic'));
-}());
+});
 
-(function test_get_invalid_recipient_emails() {
+run_test('get_invalid_recipient_emails', () => {
     var feedback_bot = {
         email: 'feedback@example.com',
         user_id: 124,
         full_name: 'Feedback Bot',
     };
-    global.page_params.cross_realm_bots = [feedback_bot];
-    global.page_params.user_id = 30;
+    page_params.cross_realm_bots = [feedback_bot];
+    page_params.user_id = 30;
     people.initialize();
     compose_state.recipient('feedback@example.com');
     assert.deepEqual(compose.get_invalid_recipient_emails(), []);
-}());
+});
 
-(function test_validate_stream_message() {
+run_test('validate_stream_message', () => {
     // This test is in kind of continuation to test_validate but since it is
     // primarily used to get coverage over functions called from validate()
     // we are separating it up in different test. Though their relative position
     // of execution should not be changed.
-    global.page_params.realm_mandatory_topics = false;
+    page_params.realm_mandatory_topics = false;
     var sub = {
         stream_id: 101,
         name: 'social',
@@ -267,15 +299,10 @@ people.add(bob);
         assert.equal(stream_name, 'social');
         return 16;
     };
-    global.templates.render = function (template_name, data) {
+    templates.render = function (template_name, data) {
         assert.equal(template_name, 'compose_all_everyone');
         assert.equal(data.count, 16);
         return 'compose_all_everyone_stub';
-    };
-    $('#compose-all-everyone').is = function (sel) {
-        if (sel === ':visible') {
-            return $('#compose-all-everyone').visible();
-        }
     };
     var compose_content;
     $('#compose-all-everyone').append = function (data) {
@@ -287,12 +314,74 @@ people.add(bob);
     assert(!$("#compose-send-status").visible());
     assert.equal(compose_content, 'compose_all_everyone_stub');
     assert($("#compose-all-everyone").visible());
-}());
+});
 
-(function test_markdown_shortcuts() {
-    blueslip.error = noop;
-    blueslip.log = noop;
+run_test('test_validate_stream_message_announcement_only', () => {
+    // This test is in continuation with test_validate but it has been seperated out
+    // for better readabilty. Their relative position of execution should not be changed.
+    // Although the position with respect to test_validate_stream_message does not matter
+    // as `get_announcement_only` is reset at the end.
+    page_params.is_admin = false;
+    var sub = {
+        stream_id: 102,
+        name: 'stream102',
+        subscribed: true,
+        announcement_only: true,
+    };
+    stream_data.get_announcement_only = function () {
+        return true;
+    };
+    compose_state.subject('subject102');
+    stream_data.add_sub('stream102', sub);
+    assert(!compose.validate());
+    assert.equal($('#compose-error-msg').html(), i18n.t("Only organization admins are allowed to post to this stream."));
 
+    // reset `get_announcement_only` so that any tests occurung after this
+    // do not reproduce this error.
+    stream_data.get_announcement_only = function () {
+        return false;
+    };
+});
+
+run_test('markdown_rtl', () => {
+    var textarea = $('#compose-textarea');
+
+    var event = {
+        keyCode: 65,  // A
+    };
+
+    rtl.get_direction = (text) => {
+        assert.equal(text, ' foo');
+        return 'rtl';
+    };
+
+    assert.equal(textarea.hasClass('rtl'), false);
+
+    textarea.val('```quote foo');
+    compose.handle_keyup(event, $("#compose-textarea"));
+
+    assert.equal(textarea.hasClass('rtl'), true);
+});
+
+// This is important for subsequent tests--put
+// us back to the "normal" ltr case.
+rtl.get_direction = () => 'ltr';
+
+run_test('markdown_ltr', () => {
+    var textarea = $('#compose-textarea');
+
+    var event = {
+        keyCode: 65,  // A
+    };
+
+    assert.equal(textarea.hasClass('rtl'), true);
+    textarea.val('```quote foo');
+    compose.handle_keyup(event, textarea);
+
+    assert.equal(textarea.hasClass('rtl'), false);
+});
+
+run_test('markdown_shortcuts', () => {
     var queryCommandEnabled = true;
     var event = {
         keyCode: 66,
@@ -314,8 +403,8 @@ people.add(bob);
     global.document.execCommand = function (cmd, bool, markdown) {
         var compose_textarea = $("#compose-textarea");
         var value = compose_textarea.val();
-        $("#compose-textarea").val(value.substring(0, compose_textarea.range().start)+
-            markdown+value.substring(compose_textarea.range().end, value.length));
+        $("#compose-textarea").val(value.substring(0, compose_textarea.range().start) +
+            markdown + value.substring(compose_textarea.range().end, value.length));
     };
 
     $("#compose-textarea").range = function () {
@@ -324,7 +413,7 @@ people.add(bob);
             end: range_start + range_length,
             length: range_length,
             range: noop,
-            text: $("#compose-textarea").val().substring(range_start, range_length+range_start),
+            text: $("#compose-textarea").val().substring(range_start, range_length + range_start),
         };
     };
     $('#compose-textarea').caret = noop;
@@ -336,7 +425,7 @@ people.add(bob);
         event.which = 73;
         event.metaKey = isCmd;
         event.ctrlKey = isCtrl;
-        compose.handle_keydown(event);
+        compose.handle_keydown(event, $("#compose-textarea"));
         assert.equal("i", $('#compose-textarea').val());
     }
 
@@ -355,13 +444,13 @@ people.add(bob);
         event.keyCode = 66;
         event.ctrlKey = isCtrl;
         event.metaKey = isCmd;
-        compose.handle_keydown(event);
+        compose.handle_keydown(event, $("#compose-textarea"));
         assert.equal("Any **text**.", $('#compose-textarea').val());
         // Test if no text is selected.
         range_start = 0;
         // Change cursor to first position.
         range_length = 0;
-        compose.handle_keydown(event);
+        compose.handle_keydown(event, $("#compose-textarea"));
         assert.equal("****Any **text**.", $('#compose-textarea').val());
 
         // Test italic:
@@ -372,13 +461,13 @@ people.add(bob);
         range_length = selected_word.length;
         event.keyCode = 73;
         event.shiftKey = false;
-        compose.handle_keydown(event);
+        compose.handle_keydown(event, $("#compose-textarea"));
         assert.equal("Any *text*.", $('#compose-textarea').val());
         // Test if no text is selected.
         range_length = 0;
         // Change cursor to first position.
         range_start = 0;
-        compose.handle_keydown(event);
+        compose.handle_keydown(event, $("#compose-textarea"));
         assert.equal("**Any *text*.", $('#compose-textarea').val());
 
         // Test link insertion:
@@ -390,11 +479,11 @@ people.add(bob);
         event.keyCode = 76;
         event.which = undefined;
         event.shiftKey = true;
-        compose.handle_keydown(event);
+        compose.handle_keydown(event, $("#compose-textarea"));
         assert.equal("Any [text](url).", $('#compose-textarea').val());
         // Test if exec command is not enabled in browser.
         queryCommandEnabled = false;
-        compose.handle_keydown(event);
+        compose.handle_keydown(event, $("#compose-textarea"));
     }
 
     // This function cross tests the cmd/ctrl + markdown shortcuts in
@@ -412,17 +501,17 @@ people.add(bob);
         event.ctrlKey = isCtrl;
 
         event.keyCode = 66;
-        compose.handle_keydown(event);
+        compose.handle_keydown(event, $("#compose-textarea"));
         assert.equal(input_text, $('#compose-textarea').val());
 
         event.keyCode = 73;
         event.shiftKey = false;
-        compose.handle_keydown(event);
+        compose.handle_keydown(event, $("#compose-textarea"));
         assert.equal(input_text, $('#compose-textarea').val());
 
         event.keyCode = 76;
         event.shiftKey = true;
-        compose.handle_keydown(event);
+        compose.handle_keydown(event, $("#compose-textarea"));
         assert.equal(input_text, $('#compose-textarea').val());
     }
 
@@ -437,7 +526,7 @@ people.add(bob);
     os_specific_markdown_test(false, true);
 
     // Setting following userAgent to test in mac env
-    global.navigator.userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.167 Safari/537.36";
+    _navigator.userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.167 Safari/537.36";
 
     // Mac userAgent tests:
     test_i_typed(false, false);
@@ -447,12 +536,10 @@ people.add(bob);
     all_markdown_test(false, true);
 
     // Reset userAgent
-    global.navigator.userAgent = "";
-}());
+    _navigator.userAgent = "";
+});
 
-(function test_send_message_success() {
-    blueslip.error = noop;
-    blueslip.log = noop;
+run_test('send_message_success', () => {
     $("#compose-textarea").val('foobarfoobar');
     $("#compose-textarea").blur();
     $("#compose-send-status").show();
@@ -475,9 +562,9 @@ people.add(bob);
     assert(!$("#sending-indicator").visible());
 
     assert(reify_message_id_checked);
-}());
+});
 
-(function test_send_message() {
+run_test('send_message', () => {
     // This is the common setup stuff for all of the four tests.
     var stub_state;
     function initialize_state_stub_dict() {
@@ -514,18 +601,18 @@ people.add(bob);
         };
         transmit.send_message = function (payload, success) {
             var single_msg = {
-              type: 'private',
-              content: '[foobar](/user_uploads/123456)',
-              sender_id: 101,
-              queue_id: undefined,
-              stream: '',
-              subject: '',
-              to: '["alice@example.com"]',
-              reply_to: 'alice@example.com',
-              private_message_recipient: 'alice@example.com',
-              to_user_ids: '31',
-              local_id: 1,
-              locally_echoed: true,
+                type: 'private',
+                content: '[foobar](/user_uploads/123456)',
+                sender_id: 101,
+                queue_id: undefined,
+                stream: '',
+                subject: '',
+                to: '["alice@example.com"]',
+                reply_to: 'alice@example.com',
+                private_message_recipient: 'alice@example.com',
+                to_user_ids: '31',
+                local_id: 1,
+                locally_echoed: true,
             };
             assert.deepEqual(payload, single_msg);
             payload.id = stub_state.local_id_counter;
@@ -533,8 +620,8 @@ people.add(bob);
             stub_state.send_msg_called += 1;
         };
         echo.reify_message_id = function (local_id, message_id) {
-            assert.equal(typeof(local_id), 'number');
-            assert.equal(typeof(message_id), 'number');
+            assert.equal(typeof local_id, 'number');
+            assert.equal(typeof message_id, 'number');
             stub_state.reify_message_id_checked += 1;
         };
 
@@ -622,16 +709,18 @@ people.add(bob);
         assert(!echo_error_msg_checked);
         assert.equal($("#compose-send-button").prop('disabled'), false);
         assert.equal($('#compose-error-msg').html(),
-                       'Error sending message: Server says 408');
+                     'Error sending message: Server says 408');
         assert.equal($("#compose-textarea").val(), 'foobarfoobar');
         assert($("#compose-textarea").is_focused());
         assert($("#compose-send-status").visible());
         assert.equal($("#compose-send-button").prop('disabled'), false);
         assert(!$("#sending-indicator").visible());
     }());
-}());
+});
 
-(function test_enter_with_preview_open() {
+set_global('document', 'document-stub');
+
+run_test('enter_with_preview_open', () => {
     // Test sending a message with content.
     compose_state.set_message_type('stream');
     $("#compose-textarea").val('message me');
@@ -666,9 +755,9 @@ people.add(bob);
 
     assert($("#enter_sends").prop("checked"));
     assert.equal($("#compose-error-msg").html(), i18n.t('You have nothing to send!'));
-}());
+});
 
-(function test_finish() {
+run_test('finish', () => {
     (function test_when_compose_validation_fails() {
         $("#compose_invite_users").show();
         $("#compose-send-button").prop('disabled', false);
@@ -697,12 +786,10 @@ people.add(bob);
         };
 
         var compose_finished_event_checked = false;
-        $.stub_selector(document, {
-            trigger: function (e) {
-                assert.equal(e.name, 'compose_finished.zulip');
-                compose_finished_event_checked = true;
-            },
-        });
+        $(document).trigger = function (e) {
+            assert.equal(e.name, 'compose_finished.zulip');
+            compose_finished_event_checked = true;
+        };
         var send_message_called = false;
         compose.send_message = function () {
             send_message_called = true;
@@ -715,9 +802,9 @@ people.add(bob);
         assert(send_message_called);
         assert(compose_finished_event_checked);
     }());
-}());
+});
 
-(function test_abort_xhr() {
+run_test('abort_xhr', () => {
     $("#compose-send-button").attr('disabled', 'disabled');
     var compose_removedata_checked = false;
     $('#compose').removeData = function (sel) {
@@ -737,7 +824,7 @@ people.add(bob);
     assert.equal($("#compose-send-button").attr(), undefined);
     assert(xhr_abort_checked);
     assert(compose_removedata_checked);
-}());
+});
 
 function verify_filedrop_payload(payload) {
     assert.equal(payload.url, '/json/user_uploads');
@@ -746,11 +833,11 @@ function verify_filedrop_payload(payload) {
     assert.equal(payload.maxfilesize, 512);
     assert.equal(payload.data.csrfmiddlewaretoken, 'fake-csrf-token');
     assert.deepEqual(payload.raw_droppable, ['text/uri-list', 'text/plain']);
-    assert.equal(typeof(payload.drop), 'function');
-    assert.equal(typeof(payload.progressUpdated), 'function');
-    assert.equal(typeof(payload.error), 'function');
-    assert.equal(typeof(payload.uploadFinished), 'function');
-    assert.equal(typeof(payload.rawDrop), 'function');
+    assert.equal(typeof payload.drop, 'function');
+    assert.equal(typeof payload.progressUpdated, 'function');
+    assert.equal(typeof payload.error, 'function');
+    assert.equal(typeof payload.uploadFinished, 'function');
+    assert.equal(typeof payload.rawDrop, 'function');
 }
 
 function test_raw_file_drop(raw_drop_func) {
@@ -776,7 +863,7 @@ function test_raw_file_drop(raw_drop_func) {
     assert(compose_ui_autosize_textarea_checked);
 }
 
-(function test_initialize() {
+run_test('initialize', () => {
     // In this test we mostly do the setup stuff in addition to testing the
     // normal workflow of the function. All the tests for the on functions are
     // done in subsequent tests directly below this test.
@@ -859,37 +946,37 @@ function test_raw_file_drop(raw_drop_func) {
 
         assert(compose_actions_start_checked);
     }());
-}());
+});
 
-(function test_update_fade() {
+run_test('update_fade', () => {
     var selector = '#stream,#subject,#private_message_recipient';
     var keyup_handler_func = $(selector).get_on_handler('keyup');
 
     var set_focused_recipient_checked = false;
-    var update_faded_messages_checked = false;
+    var update_all_called = false;
 
     global.compose_fade = {
         set_focused_recipient: function (msg_type) {
             assert.equal(msg_type, 'private');
             set_focused_recipient_checked = true;
         },
-        update_faded_messages: function () {
-            update_faded_messages_checked = true;
+        update_all: function () {
+            update_all_called = true;
         },
     };
 
     compose_state.set_message_type(false);
     keyup_handler_func();
     assert(!set_focused_recipient_checked);
-    assert(!update_faded_messages_checked);
+    assert(!update_all_called);
 
     compose_state.set_message_type('private');
     keyup_handler_func();
     assert(set_focused_recipient_checked);
-    assert(update_faded_messages_checked);
-}());
+    assert(update_all_called);
+});
 
-(function test_trigger_submit_compose_form() {
+run_test('trigger_submit_compose_form', () => {
     var prevent_default_checked = false;
     var compose_finish_checked = false;
     var e = {
@@ -907,15 +994,58 @@ function test_raw_file_drop(raw_drop_func) {
 
     assert(prevent_default_checked);
     assert(compose_finish_checked);
-}());
+});
 
-(function test_on_events() {
+run_test('needs_subscribe_warning', () => {
+    people.get_active_user_for_email = function () {
+        return;
+    };
+
+    assert.equal(compose.needs_subscribe_warning(), false);
+
+    compose_state.stream_name('random');
+    assert.equal(compose.needs_subscribe_warning(), false);
+
+    var sub = {
+        stream_id: 111,
+        name: 'random',
+        subscribed: true,
+    };
+    stream_data.add_sub('random', sub);
+    assert.equal(compose.needs_subscribe_warning(), false);
+
+    people.get_active_user_for_email = function () {
+        return {
+            user_id: 99,
+            is_bot: true,
+        };
+    };
+    assert.equal(compose.needs_subscribe_warning(), false);
+
+    people.get_active_user_for_email = function () {
+        return {
+            user_id: 99,
+            is_bot: false,
+        };
+    };
+    stream_data.is_user_subscribed = function () {
+        return true;
+    };
+    assert.equal(compose.needs_subscribe_warning(), false);
+
+    stream_data.is_user_subscribed = function () {
+        return false;
+    };
+    assert.equal(compose.needs_subscribe_warning(), true);
+});
+
+run_test('on_events', () => {
     (function test_usermention_completed_zulip_triggered() {
         var handler = $(document).get_on_handler('usermention_completed.zulip');
 
         var data = {
             mentioned: {
-              email: 'foo@bar.com',
+                email: 'foo@bar.com',
             },
         };
 
@@ -942,10 +1072,10 @@ function test_raw_file_drop(raw_drop_func) {
         var checks = [
             (function () {
                 var called;
-                compose_fade.would_receive_message = function (email) {
+                compose.needs_subscribe_warning = function (email) {
                     called = true;
                     assert.equal(email, 'foo@bar.com');
-                    return false;
+                    return true;
                 };
                 return function () { assert(called); };
             }()),
@@ -975,8 +1105,8 @@ function test_raw_file_drop(raw_drop_func) {
 
         data = {
             mentioned: {
-              email: 'foo@bar.com',
-              full_name: 'Foo Barson',
+                email: 'foo@bar.com',
+                full_name: 'Foo Barson',
             },
         };
 
@@ -1033,7 +1163,7 @@ function test_raw_file_drop(raw_drop_func) {
 
     (function test_compose_all_everyone_confirm_clicked() {
         var handler = $("#compose-all-everyone")
-                      .get_on_handler('click', '.compose-all-everyone-confirm');
+            .get_on_handler('click', '.compose-all-everyone-confirm');
 
         setup_parents_and_mock_remove('compose-all-everyone',
                                       'compose-all-everyone',
@@ -1057,7 +1187,7 @@ function test_raw_file_drop(raw_drop_func) {
 
     (function test_compose_invite_users_clicked() {
         var handler = $("#compose_invite_users")
-                      .get_on_handler('click', '.compose_invite_link');
+            .get_on_handler('click', '.compose_invite_link');
         var subscription = {
             stream_id: 102,
             name: 'test',
@@ -1082,25 +1212,23 @@ function test_raw_file_drop(raw_drop_func) {
         assert(!container_removed);
 
         // !sub will result false here and we check the failure code path.
-        blueslip.warn = function (err_msg) {
-            assert.equal(err_msg, 'Stream no longer exists: no-stream');
-        };
+        blueslip.set_test_data('warn', 'Stream no longer exists: no-stream');
         $('#stream').val('no-stream');
         container.data = function (field) {
             assert.equal(field, 'useremail');
             return 'foo@bar.com';
         };
-        var invite_err_sel = '.compose_invite_user_error';
-        container.set_find_results(invite_err_sel, $(invite_err_sel));
+        $("#compose-textarea").select(noop);
         target.prop('disabled', false);
-        $(invite_err_sel).hide();
 
         handler(event);
-
-        assert($(invite_err_sel).visible());
         assert(target.attr('disabled'));
         assert(!invite_user_to_stream_called);
         assert(!container_removed);
+        assert(!$("#compose_invite_users").visible());
+        assert.equal($('#compose-error-msg').html(), "Stream no longer exists: no-stream");
+        assert.equal(blueslip.get_test_logs('warn').length, 1);
+        blueslip.clear_test_data();
 
         // !sub will result in true here and we check the success code path.
         stream_data.add_sub('test', subscription);
@@ -1122,7 +1250,7 @@ function test_raw_file_drop(raw_drop_func) {
 
     (function test_compose_invite_close_clicked() {
         var handler = $("#compose_invite_users")
-                        .get_on_handler('click', '.compose_invite_close');
+            .get_on_handler('click', '.compose_invite_close');
 
         setup_parents_and_mock_remove('compose_invite_users_close',
                                       'compose_invite_close',
@@ -1140,6 +1268,51 @@ function test_raw_file_drop(raw_drop_func) {
         assert(container_removed);
         assert(all_invite_children_called);
         assert(!$("#compose_invite_users").visible());
+    }());
+
+    (function test_compose_not_subscribed_clicked() {
+        var handler = $("#compose-send-status")
+            .get_on_handler('click', '.sub_unsub_button');
+        var subscription = {
+            stream_id: 102,
+            name: 'test',
+            subscribed: false,
+        };
+        var compose_not_subscribed_called = false;
+        subs.sub_or_unsub = function () {
+            compose_not_subscribed_called = true;
+        };
+
+        setup_parents_and_mock_remove('compose-send-status',
+                                      'sub_unsub_button',
+                                      '.compose_not_subscribed');
+
+        handler(event);
+
+        assert(compose_not_subscribed_called);
+
+        stream_data.add_sub('test', subscription);
+        $('#stream').val('test');
+        $("#compose-send-status").show();
+
+        handler(event);
+
+        assert(!$("#compose-send-status").visible());
+    }());
+
+    (function test_compose_not_subscribed_close_clicked() {
+        var handler = $("#compose-send-status")
+            .get_on_handler('click', '#compose_not_subscribed_close');
+
+        setup_parents_and_mock_remove('compose_user_not_subscribed_close',
+                                      'compose_not_subscribed_close',
+                                      '.compose_not_subscribed');
+
+        $("#compose-send-status").show();
+
+        handler(event);
+
+        assert(!$("#compose-send-status").visible());
     }());
 
     event = {
@@ -1175,33 +1348,33 @@ function test_raw_file_drop(raw_drop_func) {
         compose_state.set_message_type('stream');
 
         var checks = [
-           (function () {
-               var called;
-               templates.render = function (template_name, context) {
-                   called = true;
-                   assert.equal(template_name, 'compose_private_stream_alert');
-                   assert.equal(context.stream_name, 'Denmark');
-                   return 'fake-compose_private_stream_alert-template';
-               };
-               return function () { assert(called); };
-           }()),
+            (function () {
+                var called;
+                templates.render = function (template_name, context) {
+                    called = true;
+                    assert.equal(template_name, 'compose_private_stream_alert');
+                    assert.equal(context.stream_name, 'Denmark');
+                    return 'fake-compose_private_stream_alert-template';
+                };
+                return function () { assert(called); };
+            }()),
 
-           (function () {
-              var called;
-              $("#compose_private_stream_alert").append = function (html) {
-                  called = true;
-                  assert.equal(html, 'fake-compose_private_stream_alert-template');
-              };
-              return function () { assert(called); };
-           }()),
+            (function () {
+                var called;
+                $("#compose_private_stream_alert").append = function (html) {
+                    called = true;
+                    assert.equal(html, 'fake-compose_private_stream_alert-template');
+                };
+                return function () { assert(called); };
+            }()),
         ];
 
         data = {
-           stream: {
-               invite_only: true,
-               name: 'Denmark',
-               subscribers: Dict.from_array([1]),
-           },
+            stream: {
+                invite_only: true,
+                name: 'Denmark',
+                subscribers: Dict.from_array([1]),
+            },
         };
 
         handler({}, data);
@@ -1213,7 +1386,7 @@ function test_raw_file_drop(raw_drop_func) {
 
     (function test_attach_files_compose_clicked() {
         var handler = $("#compose")
-                        .get_on_handler("click", "#attach_files");
+            .get_on_handler("click", "#attach_files");
         $('#file_input').clone = function (param) {
             assert(param);
         };
@@ -1230,9 +1403,11 @@ function test_raw_file_drop(raw_drop_func) {
         page_params.jitsi_server_url = 'https://meet.jit.si';
 
         var syntax_to_insert;
+        var called = false;
 
         compose_ui.insert_syntax_and_focus = function (syntax) {
             syntax_to_insert = syntax;
+            called = true;
         };
 
         var handler = $("#compose").get_on_handler("click", "#video_link");
@@ -1243,6 +1418,20 @@ function test_raw_file_drop(raw_drop_func) {
         // video link ids consist of 15 random digits
         var video_link_regex = /\[Click to join video call\]\(https:\/\/meet.jit.si\/\d{15}\)/;
         assert(video_link_regex.test(syntax_to_insert));
+
+        page_params.realm_video_chat_provider = 'Google Hangouts';
+        page_params.realm_google_hangouts_domain = 'zulip';
+
+        handler(event);
+
+        video_link_regex = /\[Click to join video call\]\(https:\/\/hangouts.google.com\/hangouts\/\_\/zulip\/\d{15}\)/;
+        assert(video_link_regex.test(syntax_to_insert));
+
+        page_params.jitsi_server_url = null;
+        called = false;
+
+        handler(event);
+        assert(!called);
     }());
 
     (function test_markdown_preview_compose_clicked() {
@@ -1287,7 +1476,7 @@ function test_raw_file_drop(raw_drop_func) {
         function test_post_error(error_callback) {
             error_callback();
             assert.equal($("#preview_content").html(),
-                            'translated: Failed to generate preview');
+                         'translated: Failed to generate preview');
         }
 
         function mock_channel_post(msg) {
@@ -1317,7 +1506,7 @@ function test_raw_file_drop(raw_drop_func) {
         }
 
         var handler = $("#compose")
-                        .get_on_handler("click", "#markdown_preview");
+            .get_on_handler("click", "#markdown_preview");
 
         // Tests start here
         $("#compose-textarea").val('');
@@ -1326,7 +1515,7 @@ function test_raw_file_drop(raw_drop_func) {
         handler(event);
 
         assert.equal($("#preview_content").html(),
-                      'translated: Nothing to preview');
+                     'translated: Nothing to preview');
         assert_visibilities();
 
         var make_indicator_called = false;
@@ -1362,12 +1551,12 @@ function test_raw_file_drop(raw_drop_func) {
         assert(apply_markdown_called);
         assert_visibilities();
         assert.equal($("#preview_content").html(),
-                      'Server: foobarfoobar');
+                     'Server: foobarfoobar');
     }());
 
     (function test_undo_markdown_preview_clicked() {
         var handler = $("#compose")
-                        .get_on_handler("click", "#undo_markdown_preview");
+            .get_on_handler("click", "#undo_markdown_preview");
 
         $("#compose-textarea").hide();
         $("#undo_markdown_preview").show();
@@ -1382,9 +1571,9 @@ function test_raw_file_drop(raw_drop_func) {
         assert($("#markdown_preview").visible());
     }());
 
-}());
+});
 
-(function test_create_message_object() {
+run_test('create_message_object', () => {
     var sub = {
         stream_id: 101,
         name: 'social',
@@ -1432,4 +1621,21 @@ function test_raw_file_drop(raw_drop_func) {
     assert.equal(message.to_user_ids, '31,32');
     assert.equal(message.content, 'burrito');
 
-}());
+});
+
+run_test('nonexistent_stream_reply_error', () => {
+    set_global('$', global.make_zjquery());
+
+    var shown;
+    var hidden;
+    $("#nonexistent_stream_reply_error").show = () => {
+        shown = _.uniqueId();
+    };
+    $("#nonexistent_stream_reply_error").hide = () => {
+        hidden = _.uniqueId();
+    };
+
+    compose.nonexistent_stream_reply_error();
+    assert.equal($("#compose-reply-error-msg").html(), 'There are no messages to reply to yet.');
+    assert(shown < hidden); // test shown before hidden
+});

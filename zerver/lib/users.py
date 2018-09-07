@@ -1,16 +1,19 @@
-from typing import Dict, List, Optional, Text
+from typing import Dict, List, Optional
 
 from django.db.models.query import QuerySet
 from django.utils.translation import ugettext as _
+from django.conf import settings
 
-from zerver.lib.cache import generic_bulk_cached_fetch, user_profile_cache_key_id
+from zerver.lib.cache import generic_bulk_cached_fetch, user_profile_cache_key_id, \
+    user_profile_by_id_cache_key
 from zerver.lib.request import JsonableError
+from zerver.lib.avatar import avatar_url
 from zerver.models import UserProfile, Service, Realm, \
-    get_user_profile_by_id
+    get_user_profile_by_id, query_for_ids, get_user_profile_by_id_in_realm
 
 from zulip_bots.custom_exceptions import ConfigValidationError
 
-def check_full_name(full_name_raw: Text) -> Text:
+def check_full_name(full_name_raw: str) -> str:
     full_name = full_name_raw.strip()
     if len(full_name) > UserProfile.MAX_NAME_LENGTH:
         raise JsonableError(_("Name too long!"))
@@ -20,7 +23,7 @@ def check_full_name(full_name_raw: Text) -> Text:
         raise JsonableError(_("Invalid characters in name!"))
     return full_name
 
-def check_short_name(short_name_raw: Text) -> Text:
+def check_short_name(short_name_raw: str) -> str:
     short_name = short_name_raw.strip()
     if len(short_name) == 0:
         raise JsonableError(_("Bad name or username"))
@@ -40,6 +43,15 @@ def check_valid_bot_config(service_name: str, config_data: Dict[str, str]) -> No
         # error message.
         raise JsonableError(_("Invalid configuration data!"))
 
+# Adds an outgoing webhook or embedded bot service.
+def add_service(name: str, user_profile: UserProfile, base_url: Optional[str]=None,
+                interface: Optional[int]=None, token: Optional[str]=None) -> None:
+    Service.objects.create(name=name,
+                           user_profile=user_profile,
+                           base_url=base_url,
+                           interface=interface,
+                           token=token)
+
 def check_bot_creation_policy(user_profile: UserProfile, bot_type: int) -> None:
     # Realm administrators can always add bot
     if user_profile.is_realm_admin:
@@ -57,7 +69,7 @@ def check_valid_bot_type(user_profile: UserProfile, bot_type: int) -> None:
     if bot_type not in user_profile.allowed_bot_types:
         raise JsonableError(_('Invalid bot type'))
 
-def check_valid_interface_type(interface_type: int) -> None:
+def check_valid_interface_type(interface_type: Optional[int]) -> None:
     if interface_type not in Service.ALLOWED_INTERFACE_TYPES:
         raise JsonableError(_('Invalid interface type'))
 
@@ -104,18 +116,73 @@ def bulk_get_users(emails: List[str], realm: Optional[Realm],
     )
 
 def user_ids_to_users(user_ids: List[int], realm: Realm) -> List[UserProfile]:
-    # TODO: Change this to do a single bulk query with
-    # generic_bulk_cached_fetch; it'll be faster.
-    #
     # TODO: Consider adding a flag to control whether deactivated
     # users should be included.
-    user_profiles = []
-    for user_id in user_ids:
-        try:
-            user_profile = get_user_profile_by_id(user_id)
-        except UserProfile.DoesNotExist:
-            raise JsonableError(_("Invalid user ID: %s" % (user_id,)))
+
+    def fetch_users_by_id(user_ids: List[int]) -> List[UserProfile]:
+        if len(user_ids) == 0:
+            return []
+
+        return list(UserProfile.objects.filter(id__in=user_ids).select_related())
+
+    user_profiles_by_id = generic_bulk_cached_fetch(
+        cache_key_function=user_profile_by_id_cache_key,
+        query_function=fetch_users_by_id,
+        object_ids=user_ids
+    )  # type: Dict[int, UserProfile]
+
+    found_user_ids = user_profiles_by_id.keys()
+    missed_user_ids = [user_id for user_id in user_ids if user_id not in found_user_ids]
+    if missed_user_ids:
+        raise JsonableError(_("Invalid user ID: %s" % (missed_user_ids[0])))
+
+    user_profiles = list(user_profiles_by_id.values())
+    for user_profile in user_profiles:
         if user_profile.realm != realm:
-            raise JsonableError(_("Invalid user ID: %s" % (user_id,)))
-        user_profiles.append(user_profile)
+            raise JsonableError(_("Invalid user ID: %s" % (user_profile.id,)))
     return user_profiles
+
+def access_bot_by_id(user_profile: UserProfile, user_id: int) -> UserProfile:
+    try:
+        target = get_user_profile_by_id_in_realm(user_id, user_profile.realm)
+    except UserProfile.DoesNotExist:
+        raise JsonableError(_("No such bot"))
+    if not target.is_bot:
+        raise JsonableError(_("No such bot"))
+    if not user_profile.can_admin_user(target):
+        raise JsonableError(_("Insufficient permission"))
+    return target
+
+def access_user_by_id(user_profile: UserProfile, user_id: int,
+                      allow_deactivated: bool=False, allow_bots: bool=False) -> UserProfile:
+    try:
+        target = get_user_profile_by_id_in_realm(user_id, user_profile.realm)
+    except UserProfile.DoesNotExist:
+        raise JsonableError(_("No such user"))
+    if target.is_bot and not allow_bots:
+        raise JsonableError(_("No such user"))
+    if not target.is_active and not allow_deactivated:
+        raise JsonableError(_("User is deactivated"))
+    if not user_profile.can_admin_user(target):
+        raise JsonableError(_("Insufficient permission"))
+    return target
+
+def get_accounts_for_email(email: str) -> List[Dict[str, Optional[str]]]:
+    if settings.PRODUCTION:  # nocoverage
+        return []
+    profiles = UserProfile.objects.select_related('realm').filter(email__iexact=email.strip(),
+                                                                  is_active=True,
+                                                                  is_bot=False,
+                                                                  realm__deactivated=False)
+    return [{"realm_name": profile.realm.name,
+             "string_id": profile.realm.string_id,
+             "full_name": profile.full_name,
+             "avatar": avatar_url(profile)}
+            for profile in profiles]
+
+def get_api_key(user_profile: UserProfile) -> str:
+    return user_profile.api_key
+
+def get_all_api_keys(user_profile: UserProfile) -> List[str]:
+    # Users can only have one API key for now
+    return [user_profile.api_key]

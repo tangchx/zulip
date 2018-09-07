@@ -11,8 +11,8 @@ from zerver.lib.rate_limiter import (
     remove_ratelimit_rule,
     RateLimitedUser,
 )
+from zerver.lib.zephyr import compute_mit_user_fullname
 
-from zerver.lib.actions import compute_mit_user_fullname
 from zerver.lib.test_classes import (
     ZulipTestCase,
 )
@@ -22,7 +22,6 @@ import mock
 import time
 
 import urllib
-from typing import Text
 
 class MITNameTest(ZulipTestCase):
     def test_valid_hesiod(self) -> None:
@@ -57,7 +56,7 @@ class RateLimitTests(ZulipTestCase):
         settings.RATE_LIMITING = False
         remove_ratelimit_rule(1, 5)
 
-    def send_api_message(self, email: Text, content: Text) -> HttpResponse:
+    def send_api_message(self, email: str, content: str) -> HttpResponse:
         return self.api_post(email, "/api/v1/messages", {"type": "stream",
                                                          "to": "Verona",
                                                          "client": "test suite",

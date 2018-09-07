@@ -1,7 +1,9 @@
 {
     "env": {
-        "shared-node-browser": true
+        "shared-node-browser": true,
+        "es6": true
     },
+    "parserOptions": { "ecmaVersion": 2018 },
     "globals": {
         "assert": false,
         "casper": false,
@@ -11,6 +13,7 @@
         "zrequire": false
     },
     "rules": {
-        "no-sync": 0
+        "no-sync": 0,
+        "prefer-const": "error"
     }
 }

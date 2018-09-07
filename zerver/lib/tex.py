@@ -3,10 +3,10 @@ import logging
 import os
 import subprocess
 from django.conf import settings
-from typing import Optional, Text
+from typing import Optional
 
-def render_tex(tex: Text, is_inline: bool=True) -> Optional[Text]:
-    """Render a TeX string into HTML using KaTeX
+def render_tex(tex: str, is_inline: bool=True) -> Optional[str]:
+    r"""Render a TeX string into HTML using KaTeX
 
     Returns the HTML string, or None if there was some error in the TeX syntax
 

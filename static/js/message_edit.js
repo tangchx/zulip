@@ -16,12 +16,21 @@ var editability_types = {
 };
 exports.editability_types = editability_types;
 
+function is_topic_editable(message, edit_limit_seconds_buffer) {
+    var now = new XDate();
+    edit_limit_seconds_buffer = edit_limit_seconds_buffer || 0;
+
+    // TODO: Change hardcoded value (24 hrs) to be realm setting
+    return message.sent_by_me || page_params.realm_allow_community_topic_editing
+        && 86400 + edit_limit_seconds_buffer + now.diffSeconds(message.timestamp * 1000) > 0;
+}
+
 function get_editability(message, edit_limit_seconds_buffer) {
     edit_limit_seconds_buffer = edit_limit_seconds_buffer || 0;
     if (!message) {
         return editability_types.NO;
     }
-    if (!(message.sent_by_me || page_params.realm_allow_community_topic_editing)) {
+    if (!is_topic_editable(message, edit_limit_seconds_buffer)) {
         return editability_types.NO;
     }
     if (message.failed_request) {
@@ -48,16 +57,11 @@ function get_editability(message, edit_limit_seconds_buffer) {
     }
 
     var now = new XDate();
-    if ((page_params.realm_message_content_edit_limit_seconds + edit_limit_seconds_buffer +
-        now.diffSeconds(message.timestamp * 1000) > 0) && message.sent_by_me) {
+    if (page_params.realm_message_content_edit_limit_seconds + edit_limit_seconds_buffer +
+        now.diffSeconds(message.timestamp * 1000) > 0 && message.sent_by_me) {
         return editability_types.FULL;
     }
 
-    // TODO: Change hardcoded value (24 hrs) to be realm setting
-    if (!message.sent_by_me && (
-        86400 + edit_limit_seconds_buffer + now.diffSeconds(message.timestamp * 1000) <= 0)) {
-        return editability_types.NO;
-    }
     // time's up!
     if (message.type === 'stream') {
         return editability_types.TOPIC_ONLY;
@@ -65,6 +69,37 @@ function get_editability(message, edit_limit_seconds_buffer) {
     return editability_types.NO_LONGER;
 }
 exports.get_editability = get_editability;
+exports.is_topic_editable = is_topic_editable;
+
+exports.get_deletability = function (message) {
+    if (page_params.is_admin) {
+        return true;
+    }
+
+    if (!message.sent_by_me) {
+        return false;
+    }
+    if (message.locally_echoed) {
+        return false;
+    }
+    if (!page_params.realm_allow_message_deleting) {
+        return false;
+    }
+
+    if (page_params.realm_message_content_delete_limit_seconds === 0) {
+        // This means no time limit for message deletion.
+        return true;
+    }
+
+    if (page_params.realm_allow_message_deleting) {
+        var now = new XDate();
+        if (page_params.realm_message_content_delete_limit_seconds +
+            now.diffSeconds(message.timestamp * 1000) > 0) {
+            return true;
+        }
+    }
+    return false;
+};
 
 // Returns true if the edit task should end.
 exports.save = function (row, from_topic_edited_only) {
@@ -88,7 +123,7 @@ exports.save = function (row, from_topic_edited_only) {
         } else {
             new_topic = row.find(".message_edit_topic").val();
         }
-        topic_changed = (new_topic !== message.subject && new_topic.trim() !== "");
+        topic_changed = new_topic !== message.subject && new_topic.trim() !== "";
     }
     // Editing a not-yet-acked message (because the original send attempt failed)
     // just results in the in-memory message being changed
@@ -202,15 +237,15 @@ function edit_message(row, raw_content) {
     // zerver.views.messages.update_message_backend
     var seconds_left_buffer = 5;
     var editability = get_editability(message, seconds_left_buffer);
-    var is_editable = (editability === message_edit.editability_types.TOPIC_ONLY ||
-                       editability === message_edit.editability_types.FULL);
+    var is_editable = editability === message_edit.editability_types.TOPIC_ONLY ||
+                       editability === message_edit.editability_types.FULL;
 
     var form = $(templates.render(
         'message_edit_form',
-        {is_stream: (message.type === 'stream'),
+        {is_stream: message.type === 'stream',
          message_id: message.id,
          is_editable: is_editable,
-         has_been_editable: (editability !== editability_types.NO),
+         has_been_editable: editability !== editability_types.NO,
          topic: message.subject,
          content: raw_content,
          minutes_to_edit: Math.floor(page_params.realm_message_content_edit_limit_seconds / 60)}));
@@ -232,7 +267,7 @@ function edit_message(row, raw_content) {
     if (editability === editability_types.NO) {
         message_edit_content.prop("readonly", "readonly");
         message_edit_topic.prop("readonly", "readonly");
-        new Clipboard(copy_message[0]);
+        new ClipboardJS(copy_message[0]);
     } else if (editability === editability_types.NO_LONGER) {
         // You can currently only reach this state in non-streams. If that
         // changes (e.g. if we stop allowing topics to be modified forever
@@ -240,12 +275,12 @@ function edit_message(row, raw_content) {
         // row.find('input.message_edit_topic') as well.
         message_edit_content.prop("readonly", "readonly");
         message_edit_countdown_timer.text(i18n.t("View source"));
-        new Clipboard(copy_message[0]);
+        new ClipboardJS(copy_message[0]);
     } else if (editability === editability_types.TOPIC_ONLY) {
         message_edit_content.prop("readonly", "readonly");
         // Hint why you can edit the topic but not the message content
         message_edit_countdown_timer.text(i18n.t("Topic editing only"));
-        new Clipboard(copy_message[0]);
+        new ClipboardJS(copy_message[0]);
     } else if (editability === editability_types.FULL) {
         copy_message.remove();
         var edit_id = "#message_edit_content_" + rows.id(row);
@@ -254,6 +289,13 @@ function edit_message(row, raw_content) {
             currently_editing_messages[rows.id(row)].listeners = listeners;
         }
         composebox_typeahead.initialize_compose_typeahead(edit_id);
+        compose.handle_keyup(null, $(edit_id).expectOne());
+        $(edit_id).on('keydown', function (event) {
+            compose.handle_keydown(event, $(this).expectOne());
+        });
+        $(edit_id).on('keyup', function (event) {
+            compose.handle_keyup(event, $(this).expectOne());
+        });
     }
 
     // Add tooltip
@@ -536,8 +578,8 @@ exports.delete_message = function (msg_id) {
                 $('#delete_message_modal').modal("hide");
             },
             error: function (xhr) {
-                ui_report.error(i18n.t("Error deleting message."), xhr,
-                    $("#delete-message-error"));
+                ui_report.error(i18n.t("Error deleting message"), xhr,
+                                $("#delete-message-error"));
             },
         });
 
@@ -559,3 +601,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = message_edit;
 }
+window.message_edit = message_edit;

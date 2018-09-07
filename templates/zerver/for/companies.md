@@ -20,17 +20,17 @@ If you haven't read [why Zulip](/why-zulip), read that first. We've also
 collected a list of features we think will be of particular interest for
 companies using Zulip.
 
-### On-premise and in the cloud
+### On-premises and in the cloud
 
 High quality export and import tools make it easy to start with Zulip in the
-cloud, knowing that you can move to a on-premise deployment (or back) if
+cloud, knowing that you can move to a on-premises deployment (or back) if
 your budget or security needs change.
 
 ### No vendor lock-in
 
-Zulip's license (Apache 2) and [published code base](github.com/zulip/zulip)
-means you will always be able to run Zulip on your own servers, for free,
-forever.
+Zulip's license (Apache 2) and
+[published code base](https://github.com/zulip/zulip) means you will
+always be able to run Zulip on your own servers, for free, forever.
 
 ### Highly customizable
 

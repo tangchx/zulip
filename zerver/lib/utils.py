@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 
-from typing import Any, Callable, List, Optional, Sequence, TypeVar, Iterable, Set, Tuple, Text
+from typing import Any, Callable, List, Optional, Sequence, TypeVar, Iterable, Set, Tuple
 import base64
 import errno
 import hashlib
 import heapq
 import itertools
 import os
+import string
 import sys
 from time import sleep
 from itertools import zip_longest
@@ -85,8 +86,8 @@ def run_in_batches(all_list: Sequence[T],
         if i != limit - 1:
             sleep(sleep_time)
 
-def make_safe_digest(string: Text,
-                     hash_func: Callable[[bytes], Any]=hashlib.sha1) -> Text:
+def make_safe_digest(string: str,
+                     hash_func: Callable[[bytes], Any]=hashlib.sha1) -> str:
     """
     return a hex digest of `string`.
     """
@@ -111,6 +112,12 @@ def log_statsd_event(name: str) -> None:
 
 def generate_random_token(length: int) -> str:
     return str(base64.b16encode(os.urandom(length // 2)).decode('utf-8').lower())
+
+def generate_api_key() -> str:
+    choices = string.ascii_letters + string.digits
+    altchars = ''.join([choices[ord(os.urandom(1)) % 62] for _ in range(2)]).encode("utf-8")
+    api_key = base64.b64encode(os.urandom(24), altchars=altchars).decode("utf-8")
+    return api_key
 
 def query_chunker(queries: List[Any],
                   id_collector: Optional[Set[int]]=None,
@@ -178,7 +185,7 @@ def split_by(array: List[Any], group_size: int, filler: Any) -> List[List[Any]]:
     args = [iter(array)] * group_size
     return list(map(list, zip_longest(*args, fillvalue=filler)))
 
-def is_remote_server(identifier: Text) -> bool:
+def is_remote_server(identifier: str) -> bool:
     """
     This function can be used to identify the source of API auth
     request. We can have two types of sources, Remote Zulip Servers

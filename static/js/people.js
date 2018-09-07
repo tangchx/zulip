@@ -8,6 +8,7 @@ var people_by_user_id_dict;
 var active_user_dict;
 var cross_realm_dict;
 var pm_recipient_count_dict;
+var duplicate_full_name_data;
 var my_user_id;
 
 // We have an init() function so that our automated tests
@@ -27,6 +28,9 @@ exports.init = function () {
     active_user_dict = new Dict();
     cross_realm_dict = new Dict(); // keyed by user_id
     pm_recipient_count_dict = new Dict();
+
+    // The next Dict maintains a set of ids of people with same full names.
+    duplicate_full_name_data = new Dict({fold_case: true});
 };
 
 // WE INITIALIZE DATA STRUCTURES HERE!
@@ -73,7 +77,7 @@ exports.id_matches_email_operand = function (user_id, email) {
         return false;
     }
 
-    return (person.user_id === user_id);
+    return person.user_id === user_id;
 };
 
 exports.update_email = function (user_id, new_email) {
@@ -137,7 +141,7 @@ exports.huddle_string = function (message) {
     function is_huddle_recip(user_id) {
         return user_id &&
             people_by_user_id_dict.has(user_id) &&
-            (!exports.is_my_user_id(user_id));
+            !exports.is_my_user_id(user_id);
     }
 
     user_ids = _.filter(user_ids, is_huddle_recip);
@@ -240,6 +244,19 @@ exports.email_list_to_user_ids_string = function (emails) {
     user_ids = sort_numerically(user_ids);
 
     return user_ids.join(',');
+};
+
+exports.safe_full_names = function (user_ids) {
+    var names = _.map(user_ids, function (user_id) {
+        var person = people_by_user_id_dict.get(user_id);
+        if (person) {
+            return person.full_name;
+        }
+    });
+
+    names = _.filter(names);
+
+    return names.join(', ');
 };
 
 exports.get_full_name = function (user_id) {
@@ -449,7 +466,7 @@ exports.pm_with_operand_ids = function (operand) {
 };
 
 exports.emails_to_slug = function (emails_string) {
-    var slug = exports.emails_strings_to_user_ids_string(emails_string);
+    var slug = exports.reply_to_to_user_ids_string(emails_string);
 
     if (!slug) {
         return;
@@ -489,6 +506,20 @@ exports.sender_is_bot = function (message) {
     return false;
 };
 
+function gravatar_url_for_email(email) {
+    var hash = md5(email.toLowerCase());
+    var avatar_url = 'https://secure.gravatar.com/avatar/' + hash + '?d=identicon';
+    var small_avatar_url = exports.format_small_avatar_url(avatar_url);
+    return small_avatar_url;
+}
+
+exports.small_avatar_url_for_person = function (person) {
+    if (person.avatar_url) {
+        return exports.format_small_avatar_url(person.avatar_url);
+    }
+    return gravatar_url_for_email(person.email);
+};
+
 exports.small_avatar_url = function (message) {
     // Try to call this function in all places where we need 25px
     // avatar images, so that the browser can help
@@ -498,9 +529,7 @@ exports.small_avatar_url = function (message) {
     // We actually request these at s=50, so that we look better
     // on retina displays.
 
-    var url = "";
     var person;
-
     if (message.sender_id) {
         // We should always have message.sender_id, except for in the
         // tutorial, where it's ok to fall back to the url in the fake
@@ -508,36 +537,30 @@ exports.small_avatar_url = function (message) {
         person = exports.get_person_from_user_id(message.sender_id);
     }
 
-    var email;
-
     // The first time we encounter a sender in a message, we may
     // not have person.avatar_url set, but if we do, then use that.
-    if (person) {
-        url = person.avatar_url;
-        email = person.email;
+    if (person && person.avatar_url) {
+        return exports.small_avatar_url_for_person(person);
     }
 
     // Try to get info from the message if we didn't have a `person` object
     // or if the avatar was missing. We do this verbosely to avoid false
     // positives on line coverage (we don't do branch checking).
-    if (!url) {
-        url = message.avatar_url;
+    if (message.avatar_url) {
+        return exports.format_small_avatar_url(message.avatar_url);
     }
 
-    if (!email) {
+    // For computing the user's email, we first trust the person
+    // object since that is updated via our real-time sync system, but
+    // if unavailable, we use the sender email.
+    var email;
+    if (person) {
+        email = person.email;
+    } else {
         email = message.sender_email;
     }
 
-    if (!url) {
-        var hash = md5(email);
-        url = 'https://secure.gravatar.com/avatar/' + hash + '?d=identicon';
-    }
-
-    if (url) {
-        url = exports.format_small_avatar_url(url);
-    }
-
-    return url;
+    return gravatar_url_for_email(email);
 };
 
 exports.is_valid_email_for_compose = function (email) {
@@ -550,6 +573,16 @@ exports.is_valid_email_for_compose = function (email) {
         return false;
     }
     return active_user_dict.has(person.user_id);
+};
+
+exports.is_valid_bulk_emails_for_compose = function (emails) {
+    // Returns false if at least one of the emails is invalid.
+    return _.every(emails, function (email) {
+        if (!people.is_valid_email_for_compose(email)) {
+            return false;
+        }
+        return true;
+    });
 };
 
 exports.get_active_user_for_email = function (email) {
@@ -586,6 +619,13 @@ exports.get_all_persons = function () {
 
 exports.get_realm_persons = function () {
     return active_user_dict.values();
+};
+
+exports.get_active_human_persons = function () {
+    var human_persons = exports.get_realm_persons().filter(function (person)  {
+        return !person.is_bot;
+    });
+    return human_persons;
 };
 
 exports.get_active_user_ids = function () {
@@ -627,14 +667,13 @@ function remove_diacritics(s) {
         return s;
     }
 
-    return s
-            .replace(/[áàãâä]/g,"a")
-            .replace(/[éèëê]/g,"e")
-            .replace(/[íìïî]/g,"i")
-            .replace(/[óòöôõ]/g,"o")
-            .replace(/[úùüû]/g, "u")
-            .replace(/[ç]/g, "c")
-            .replace(/[ñ]/g, "n");
+    return s.replace(/[áàãâä]/g,"a")
+        .replace(/[éèëê]/g,"e")
+        .replace(/[íìïî]/g,"i")
+        .replace(/[óòöôõ]/g,"o")
+        .replace(/[úùüû]/g, "u")
+        .replace(/[ç]/g, "c")
+        .replace(/[ñ]/g, "n");
 }
 
 exports.person_matches_query = function (user, query) {
@@ -664,27 +703,27 @@ exports.person_matches_query = function (user, query) {
 };
 
 exports.filter_people_by_search_terms = function (users, search_terms) {
-        var filtered_users = new Dict();
+    var filtered_users = new Dict();
 
-        // Loop through users and populate filtered_users only
-        // if they include search_terms
-        _.each(users, function (user) {
-            var person = exports.get_by_email(user.email);
-            // Get person object (and ignore errors)
-            if (!person || !person.full_name) {
-                return;
-            }
+    // Loop through users and populate filtered_users only
+    // if they include search_terms
+    _.each(users, function (user) {
+        var person = exports.get_by_email(user.email);
+        // Get person object (and ignore errors)
+        if (!person || !person.full_name) {
+            return;
+        }
 
-            // Return user emails that include search terms
-            var match = _.any(search_terms, function (search_term) {
-                return exports.person_matches_query(user, search_term);
-            });
-
-            if (match) {
-                filtered_users.set(person.user_id, true);
-            }
+        // Return user emails that include search terms
+        var match = _.any(search_terms, function (search_term) {
+            return exports.person_matches_query(user, search_term);
         });
-        return filtered_users;
+
+        if (match) {
+            filtered_users.set(person.user_id, true);
+        }
+    });
+    return filtered_users;
 };
 
 exports.get_by_name = function (name) {
@@ -713,6 +752,27 @@ exports.get_rest_of_realm = function get_rest_of_realm() {
     return people_minus_you.sort(people_cmp);
 };
 
+exports.track_duplicate_full_name = function (full_name, user_id, to_remove) {
+    var ids = new Dict();
+    if (duplicate_full_name_data.has(full_name)) {
+        ids = duplicate_full_name_data.get(full_name);
+    }
+    if (!to_remove && user_id) {
+        ids.set(user_id);
+    }
+    if (to_remove && user_id && ids.has(user_id)) {
+        ids.del(user_id);
+    }
+    duplicate_full_name_data.set(full_name,ids);
+};
+
+exports.is_duplicate_full_name = function (full_name) {
+    if (duplicate_full_name_data.has(full_name)) {
+        return duplicate_full_name_data.get(full_name).keys().length > 1;
+    }
+    return false;
+};
+
 exports.add = function add(person) {
     if (person.user_id) {
         people_by_user_id_dict.set(person.user_id, person);
@@ -726,6 +786,7 @@ exports.add = function add(person) {
         blueslip.warn('No user_id provided for ' + person.email);
     }
 
+    exports.track_duplicate_full_name(person.full_name, person.user_id);
     people_dict.set(person.email, person);
     people_by_name_dict.set(person.full_name, person);
 };
@@ -748,7 +809,11 @@ exports.report_late_add = function (user_id, email) {
     // types of realms.
     var msg = 'Added user late: user_id=' + user_id + ' email=' + email;
 
-    blueslip.error(msg);
+    if (reload_state.is_in_progress()) {
+        blueslip.log(msg);
+    } else {
+        blueslip.error(msg);
+    }
 };
 
 exports.extract_people_from_message = function (message) {
@@ -815,6 +880,9 @@ exports.set_full_name = function (person_obj, new_full_name) {
     if (people_by_name_dict.has(person_obj.full_name)) {
         people_by_name_dict.del(person_obj.full_name);
     }
+    // Remove previous and add new full name to the duplicate full name tracker.
+    exports.track_duplicate_full_name(person_obj.full_name, person_obj.user_id, true);
+    exports.track_duplicate_full_name(new_full_name, person_obj.user_id);
     people_by_name_dict.set(new_full_name, person_obj);
     person_obj.full_name = new_full_name;
 };
@@ -856,7 +924,11 @@ exports.my_custom_profile_data = function (field_id) {
         blueslip.error("Undefined field id");
         return;
     }
-    return people_by_user_id_dict.get(my_user_id).profile_data[field_id];
+    return exports.get_custom_profile_data(my_user_id, field_id);
+};
+
+exports.get_custom_profile_data = function (user_id, field_id) {
+    return people_by_user_id_dict.get(user_id).profile_data[field_id];
 };
 
 exports.is_my_user_id = function (user_id) {
@@ -895,3 +967,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = people;
 }
+window.people = people;

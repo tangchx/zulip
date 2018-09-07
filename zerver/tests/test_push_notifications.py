@@ -5,15 +5,19 @@ import requests
 import mock
 from mock import call
 import time
-from typing import Any, Dict, List, Optional, Union, SupportsInt, Text
+from typing import Any, Dict, List, Optional, Union, SupportsInt
 
+import base64
 import gcm
+import json
 import os
 import ujson
+import uuid
 
 from django.test import TestCase, override_settings
 from django.conf import settings
 from django.http import HttpResponse
+from django.utils.crypto import get_random_string
 
 from zerver.models import (
     PushDeviceToken,
@@ -43,7 +47,6 @@ from zilencer.models import RemoteZulipServer, RemotePushDeviceToken
 from django.utils.timezone import now
 
 ZERVER_DIR = os.path.dirname(os.path.dirname(__file__))
-FIXTURES_FILE_PATH = os.path.join(ZERVER_DIR, "fixtures", "markdown_test_cases.json")
 
 class BouncerTestCase(ZulipTestCase):
     def setUp(self) -> None:
@@ -74,7 +77,7 @@ class BouncerTestCase(ZulipTestCase):
             raise AssertionError("Unsupported method for bounce_request")
         return result
 
-    def get_generic_payload(self, method: Text='register') -> Dict[str, Any]:
+    def get_generic_payload(self, method: str='register') -> Dict[str, Any]:
         user_id = 10
         token = "111222"
         token_kind = PushDeviceToken.GCM
@@ -139,6 +142,34 @@ class PushBouncerNotificationTest(BouncerTestCase):
                                                                         'token_kind': token_kind,
                                                                         'token': token})
         self.assert_json_error(result, "Must validate with valid Zulip server API key")
+
+        result = self.api_post(self.server_uuid, endpoint, {'user_id': user_id,
+                                                            'token_kind': token_kind,
+                                                            'token': token},
+                               subdomain="zulip")
+        self.assert_json_error(result, "Invalid subdomain for push notifications bouncer",
+                               status_code=401)
+
+        # We do a bit of hackery here to the API_KEYS cache just to
+        # make the code simple for sending an incorrect API key.
+        from zerver.lib.test_classes import API_KEYS
+        API_KEYS[self.server_uuid] = 'invalid'
+        result = self.api_post(self.server_uuid, endpoint, {'user_id': user_id,
+                                                            'token_kind': token_kind,
+                                                            'token': token})
+        self.assert_json_error(result, "Zulip server auth failure: key does not match role 1234-abcd",
+                               status_code=401)
+
+        del API_KEYS[self.server_uuid]
+
+        credentials = "%s:%s" % ("5678-efgh", 'invalid')
+        api_auth = 'Basic ' + base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
+        result = self.client_post(endpoint, {'user_id': user_id,
+                                             'token_kind': token_kind,
+                                             'token': token},
+                                  HTTP_AUTHORIZATION = api_auth)
+        self.assert_json_error(result, "Zulip server auth failure: 5678-efgh is not registered",
+                               status_code=401)
 
     def test_remote_push_user_endpoints(self) -> None:
         endpoints = [
@@ -359,6 +390,15 @@ class HandlePushNotificationTest(PushNotificationTest):
                 mock_info.assert_any_call(
                     "GCM: Sent %s as %s" % (token, message.id))
 
+            # Now test the unregistered case
+            mock_apns.get_notification_result.return_value = ('Unregistered', 1234567)
+            apn.handle_push_notification(self.user_profile.id, missed_message)
+            for _, _, token in apns_devices:
+                mock_info.assert_any_call(
+                    "APNs: Removing invalid/expired token %s (%s)" %
+                    (token, "Unregistered"))
+            self.assertEqual(RemotePushDeviceToken.objects.filter(kind=PushDeviceToken.APNS).count(), 0)
+
     def test_end_to_end_connection_error(self) -> None:
         remote_gcm_tokens = [u'dddd']
         for token in remote_gcm_tokens:
@@ -495,6 +535,54 @@ class HandlePushNotificationTest(PushNotificationTest):
                                                {'apns': True})
             mock_send_android.assert_called_with(android_devices,
                                                  {'gcm': True})
+
+    @override_settings(SEND_REMOVE_PUSH_NOTIFICATIONS=True)
+    def test_send_remove_notifications_to_bouncer(self) -> None:
+        user_profile = self.example_user('hamlet')
+        message = self.get_message(Recipient.PERSONAL, type_id=1)
+        UserMessage.objects.create(
+            user_profile=user_profile,
+            message=message
+        )
+
+        with self.settings(PUSH_NOTIFICATION_BOUNCER_URL=True), \
+                mock.patch('zerver.lib.push_notifications'
+                           '.send_notifications_to_bouncer') as mock_send_android, \
+                mock.patch('zerver.lib.push_notifications.get_common_payload',
+                           return_value={'gcm': True}):
+            apn.handle_remove_push_notification(user_profile.id, message.id)
+            mock_send_android.assert_called_with(user_profile.id, {},
+                                                 {'gcm': True,
+                                                  'event': 'remove',
+                                                  'zulip_message_id': message.id})
+
+    @override_settings(SEND_REMOVE_PUSH_NOTIFICATIONS=True)
+    def test_non_bouncer_push_remove(self) -> None:
+        message = self.get_message(Recipient.PERSONAL, type_id=1)
+        UserMessage.objects.create(
+            user_profile=self.user_profile,
+            message=message
+        )
+
+        for token in [u'dddd']:
+            PushDeviceToken.objects.create(
+                kind=PushDeviceToken.GCM,
+                token=apn.hex_to_b64(token),
+                user=self.user_profile)
+
+        android_devices = list(
+            PushDeviceToken.objects.filter(user=self.user_profile,
+                                           kind=PushDeviceToken.GCM))
+
+        with mock.patch('zerver.lib.push_notifications'
+                        '.send_android_push_notification') as mock_send_android, \
+                mock.patch('zerver.lib.push_notifications.get_common_payload',
+                           return_value={'gcm': True}):
+            apn.handle_remove_push_notification(self.user_profile.id, message.id)
+            mock_send_android.assert_called_with(android_devices,
+                                                 {'gcm': True,
+                                                  'event': 'remove',
+                                                  'zulip_message_id': message.id})
 
     def test_user_message_does_not_exist(self) -> None:
         """This simulates a condition that should only be an error if the user is
@@ -704,6 +792,7 @@ class TestGetAPNsPayload(PushNotificationTest):
                     'sender_id': 4,
                     'server': settings.EXTERNAL_HOST,
                     'realm_id': message.sender.realm.id,
+                    'realm_uri': message.sender.realm.uri,
                 }
             }
         }
@@ -732,6 +821,7 @@ class TestGetAPNsPayload(PushNotificationTest):
                     "topic": message.subject,
                     'server': settings.EXTERNAL_HOST,
                     'realm_id': message.sender.realm.id,
+                    'realm_uri': message.sender.realm.uri,
                 }
             }
         }
@@ -763,6 +853,7 @@ class TestGetAPNsPayload(PushNotificationTest):
                     'sender_id': 4,
                     'server': settings.EXTERNAL_HOST,
                     'realm_id': message.sender.realm.id,
+                    'realm_uri': message.sender.realm.uri,
                 }
             }
         }
@@ -789,6 +880,7 @@ class TestGetGCMPayload(PushNotificationTest):
             "content_truncated": True,
             "server": settings.EXTERNAL_HOST,
             "realm_id": self.example_user("hamlet").realm.id,
+            "realm_uri": self.example_user("hamlet").realm.uri,
             "sender_id": self.example_user("hamlet").id,
             "sender_email": self.example_email("hamlet"),
             "sender_full_name": "King Hamlet",
@@ -814,6 +906,7 @@ class TestGetGCMPayload(PushNotificationTest):
             "content_truncated": False,
             "server": settings.EXTERNAL_HOST,
             "realm_id": self.example_user("hamlet").realm.id,
+            "realm_uri": self.example_user("hamlet").realm.uri,
             "sender_id": self.example_user("hamlet").id,
             "sender_email": self.example_email("hamlet"),
             "sender_full_name": "King Hamlet",
@@ -838,6 +931,7 @@ class TestGetGCMPayload(PushNotificationTest):
             "content_truncated": False,
             "server": settings.EXTERNAL_HOST,
             "realm_id": self.example_user("hamlet").realm.id,
+            "realm_uri": self.example_user("hamlet").realm.uri,
             "sender_id": self.example_user("hamlet").id,
             "sender_email": self.example_email("hamlet"),
             "sender_full_name": "King Hamlet",
@@ -865,6 +959,7 @@ class TestGetGCMPayload(PushNotificationTest):
             "content_truncated": False,
             "server": settings.EXTERNAL_HOST,
             "realm_id": self.example_user("hamlet").realm.id,
+            "realm_uri": self.example_user("hamlet").realm.uri,
             "sender_id": self.example_user("hamlet").id,
             "sender_email": self.example_email("hamlet"),
             "sender_full_name": "King Hamlet",
@@ -1078,7 +1173,7 @@ class GCMCanonicalTest(GCMTest):
         res['canonical'] = {t1: t2}
         mock_send.return_value = res
 
-        def get_count(hex_token: Text) -> int:
+        def get_count(hex_token: str) -> int:
             token = apn.hex_to_b64(hex_token)
             return PushDeviceToken.objects.filter(
                 token=token, kind=PushDeviceToken.GCM).count()
@@ -1106,7 +1201,7 @@ class GCMCanonicalTest(GCMTest):
         res['canonical'] = {old_token: new_token}
         mock_send.return_value = res
 
-        def get_count(hex_token: Text) -> int:
+        def get_count(hex_token: str) -> int:
             token = apn.hex_to_b64(hex_token)
             return PushDeviceToken.objects.filter(
                 token=token, kind=PushDeviceToken.GCM).count()
@@ -1131,7 +1226,7 @@ class GCMNotRegisteredTest(GCMTest):
         res['errors'] = {'NotRegistered': [token]}
         mock_send.return_value = res
 
-        def get_count(hex_token: Text) -> int:
+        def get_count(hex_token: str) -> int:
             token = apn.hex_to_b64(hex_token)
             return PushDeviceToken.objects.filter(
                 token=token, kind=PushDeviceToken.GCM).count()
@@ -1245,8 +1340,7 @@ class TestReceivesNotificationsFunctions(ZulipTestCase):
 
 class TestPushNotificationsContent(ZulipTestCase):
     def test_fixtures(self) -> None:
-        with open(FIXTURES_FILE_PATH) as fp:
-            fixtures = ujson.load(fp)
+        fixtures = ujson.loads(self.fixture_data("markdown_test_cases.json"))
         tests = fixtures["regular_tests"]
         for test in tests:
             if "text_content" in test:
@@ -1275,3 +1369,96 @@ class TestPushNotificationsContent(ZulipTestCase):
         for test in fixtures:
             actual_output = get_mobile_push_content(test["rendered_content"])
             self.assertEqual(actual_output, test["expected_output"])
+
+class PushBouncerSignupTest(ZulipTestCase):
+    def test_push_signup_invalid_host(self) -> None:
+        zulip_org_id = str(uuid.uuid4())
+        zulip_org_key = get_random_string(64)
+        request = dict(
+            zulip_org_id=zulip_org_id,
+            zulip_org_key=zulip_org_key,
+            hostname="invalid-host",
+            contact_email="server-admin@example.com",
+        )
+        result = self.client_post("/api/v1/remotes/server/register", request)
+        self.assert_json_error(result, "invalid-host is not a valid hostname")
+
+    def test_push_signup_invalid_email(self) -> None:
+        zulip_org_id = str(uuid.uuid4())
+        zulip_org_key = get_random_string(64)
+        request = dict(
+            zulip_org_id=zulip_org_id,
+            zulip_org_key=zulip_org_key,
+            hostname="example.com",
+            contact_email="server-admin",
+        )
+        result = self.client_post("/api/v1/remotes/server/register", request)
+        self.assert_json_error(result, "Enter a valid email address.")
+
+    def test_push_signup_success(self) -> None:
+        zulip_org_id = str(uuid.uuid4())
+        zulip_org_key = get_random_string(64)
+        request = dict(
+            zulip_org_id=zulip_org_id,
+            zulip_org_key=zulip_org_key,
+            hostname="example.com",
+            contact_email="server-admin@example.com",
+        )
+        result = self.client_post("/api/v1/remotes/server/register", request)
+        self.assert_json_success(result)
+        server = RemoteZulipServer.objects.get(uuid=zulip_org_id)
+        self.assertEqual(server.hostname, "example.com")
+        self.assertEqual(server.contact_email, "server-admin@example.com")
+
+        # Update our hostname
+        request = dict(
+            zulip_org_id=zulip_org_id,
+            zulip_org_key=zulip_org_key,
+            hostname="zulip.example.com",
+            contact_email="server-admin@example.com",
+        )
+        result = self.client_post("/api/v1/remotes/server/register", request)
+        self.assert_json_success(result)
+        server = RemoteZulipServer.objects.get(uuid=zulip_org_id)
+        self.assertEqual(server.hostname, "zulip.example.com")
+        self.assertEqual(server.contact_email, "server-admin@example.com")
+
+        # Now test rotating our key
+        request = dict(
+            zulip_org_id=zulip_org_id,
+            zulip_org_key=zulip_org_key,
+            hostname="example.com",
+            contact_email="server-admin@example.com",
+            new_org_key=get_random_string(64),
+        )
+        result = self.client_post("/api/v1/remotes/server/register", request)
+        self.assert_json_success(result)
+        server = RemoteZulipServer.objects.get(uuid=zulip_org_id)
+        self.assertEqual(server.hostname, "example.com")
+        self.assertEqual(server.contact_email, "server-admin@example.com")
+        zulip_org_key = request["new_org_key"]
+        self.assertEqual(server.api_key, zulip_org_key)
+
+        # Update our hostname
+        request = dict(
+            zulip_org_id=zulip_org_id,
+            zulip_org_key=zulip_org_key,
+            hostname="zulip.example.com",
+            contact_email="new-server-admin@example.com",
+        )
+        result = self.client_post("/api/v1/remotes/server/register", request)
+        self.assert_json_success(result)
+        server = RemoteZulipServer.objects.get(uuid=zulip_org_id)
+        self.assertEqual(server.hostname, "zulip.example.com")
+        self.assertEqual(server.contact_email, "new-server-admin@example.com")
+
+        # Now test trying to double-create with a new random key fails
+        request = dict(
+            zulip_org_id=zulip_org_id,
+            zulip_org_key=get_random_string(64),
+            hostname="example.com",
+            contact_email="server-admin@example.com",
+        )
+        result = self.client_post("/api/v1/remotes/server/register", request)
+        self.assert_json_error(result, "Zulip server auth failure: key does not match role %s" %
+                               (zulip_org_id,))

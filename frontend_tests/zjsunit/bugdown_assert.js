@@ -20,7 +20,7 @@
  * HTML.  This makes it easier to spot relevant differences.
  */
 
-const jsdom = require('jsdom');
+const { JSDOM } = require('jsdom');
 const _ = require('underscore');
 
 const mdiff = require('./mdiff.js');
@@ -31,13 +31,14 @@ let _markdownComparerInstance = null;
 class MarkdownComparer {
     constructor(output_formatter) {
         this._output_formatter = output_formatter || function (actual, expected) {
-            return ["Actual and expected output do not match.",
-                    actual,
-                    "!=",
-                    expected,
-                ].join('\n');
+            return [
+                "Actual and expected output do not match.",
+                actual,
+                "!=",
+                expected,
+            ].join('\n');
         };
-        this._document = jsdom.jsdom();
+        this._document = new JSDOM().window.document;
     }
 
     setFormatter(output_formatter) {

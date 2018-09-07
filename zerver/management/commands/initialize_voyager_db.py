@@ -1,6 +1,6 @@
 
 from argparse import ArgumentParser
-from typing import Any, Iterable, Text, Tuple, Optional
+from typing import Any, Iterable, Tuple, Optional
 
 from django.conf import settings
 from django.contrib.sites.models import Site
@@ -12,7 +12,7 @@ from zerver.models import Realm, UserProfile, \
 
 settings.TORNADO_SERVER = None
 
-def create_users(realm: Realm, name_list: Iterable[Tuple[Text, Text]], bot_type: Optional[int]=None) -> None:
+def create_users(realm: Realm, name_list: Iterable[Tuple[str, str]], bot_type: Optional[int]=None) -> None:
     user_set = set()
     for full_name, email in name_list:
         short_name = email_to_username(email)
@@ -30,6 +30,9 @@ class Command(BaseCommand):
                             help='The number of extra users to create')
 
     def handle(self, *args: Any, **options: Any) -> None:
+        if Realm.objects.count() > 0:
+            print("Database already initialized; doing nothing.")
+            return
         realm = Realm.objects.create(string_id=settings.INTERNAL_BOT_DOMAIN.split('.')[0])
 
         names = [(settings.FEEDBACK_BOT_NAME, settings.FEEDBACK_BOT)]

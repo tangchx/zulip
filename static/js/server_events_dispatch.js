@@ -10,9 +10,35 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         alert_words_ui.render_alert_words_ui();
         break;
 
+    case 'attachment':
+        attachments_ui.update_attachments(event);
+        break;
+
+    case 'custom_profile_fields':
+        page_params.custom_profile_fields = event.fields;
+        settings_profile_fields.populate_profile_fields(page_params.custom_profile_fields);
+        settings_account.add_custom_profile_fields_to_settings();
+        break;
+
     case 'default_streams':
         stream_data.set_realm_default_streams(event.default_streams);
         settings_streams.update_default_streams_table();
+        break;
+
+    case 'delete_message':
+        var msg_id = event.message_id;
+        // message is passed to unread.get_unread_messages,
+        // which returns all the unread messages out of a given list.
+        // So double marking something as read would not occur
+        unread_ops.process_read_messages_event([msg_id]);
+        if (event.message_type === 'stream') {
+            topic_data.remove_message({
+                stream_id: event.stream_id,
+                topic_name: event.topic,
+            });
+            stream_list.update_streams_sidebar();
+        }
+        ui.remove_message(msg_id);
         break;
 
     case 'hotspots':
@@ -20,6 +46,12 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         page_params.hotspots = page_params.hotspots ?
             page_params.hotspots.concat(event.hotspots) :
             event.hotspots;
+        break;
+
+    case 'invites_changed':
+        if ($('#admin-invites-list').length) {
+            settings_invites.set_up();
+        }
         break;
 
     case 'muted_topics':
@@ -31,11 +63,12 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         break;
 
     case 'restart':
-        var reload_options = {save_pointer: true,
-                              save_narrow: true,
-                              save_compose: true,
-                              message: "The application has been updated; reloading!",
-                             };
+        var reload_options = {
+            save_pointer: true,
+            save_narrow: true,
+            save_compose: true,
+            message: "The application has been updated; reloading!",
+        };
         if (event.immediate) {
             reload_options.immediate = true;
         }
@@ -56,6 +89,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             allow_edit_history: noop,
             allow_message_deleting: noop,
             allow_message_editing: noop,
+            allow_community_topic_editing: noop,
             bot_creation_policy: settings_bots.update_bot_permissions_ui,
             create_stream_by_admins_only: noop,
             default_language: noop,
@@ -63,19 +97,22 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             description: noop,
             email_changes_disabled: settings_account.update_email_change_display,
             disallow_disposable_email_addresses: noop,
+            google_hangouts_domain: noop,
             inline_image_preview: noop,
             inline_url_embed_preview: noop,
             invite_by_admins_only: noop,
             invite_required: noop,
             mandatory_topics: noop,
             message_content_edit_limit_seconds: noop,
+            message_content_delete_limit_seconds: noop,
             message_retention_days: noop,
             name: notifications.redraw_title,
             name_changes_disabled: settings_account.update_name_change_display,
             notifications_stream_id: noop,
             send_welcome_emails: noop,
             signup_notifications_stream_id: noop,
-            restricted_to_domain: noop,
+            emails_restricted_to_domains: noop,
+            video_chat_provider: noop,
             waiting_period_threshold: noop,
         };
         if (event.op === 'update' && _.has(realm_settings, event.property)) {
@@ -84,8 +121,8 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             settings_org.sync_realm_settings(event.property);
             if (event.property === 'create_stream_by_admins_only') {
                 if (!page_params.is_admin) {
-                    page_params.can_create_streams = (!page_params.
-                                                        realm_create_stream_by_admins_only);
+                    page_params.can_create_streams =
+                        !page_params.realm_create_stream_by_admins_only;
                 }
             } else if (event.property === 'notifications_stream_id') {
                 settings_org.render_notifications_stream_ui(
@@ -163,12 +200,6 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         settings_filters.populate_filters(page_params.realm_filters);
         break;
 
-    case 'custom_profile_fields':
-        page_params.custom_profile_fields = event.fields;
-        settings_profile_fields.populate_profile_fields(page_params.custom_profile_fields);
-        settings_profile_fields.report_success(event.op);
-        break;
-
     case 'realm_domains':
         var i;
         if (event.op === 'add') {
@@ -197,6 +228,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             people.add_in_realm(event.person);
         } else if (event.op === 'remove') {
             people.deactivate(event.person);
+            stream_events.remove_deactivated_user_from_all_streams(event.person.user_id);
         } else if (event.op === 'update') {
             user_events.update_person(event.person);
         }
@@ -221,8 +253,8 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         } else if (event.op === 'delete') {
             _.each(event.streams, function (stream) {
                 var was_subscribed = stream_data.get_sub_by_id(stream.stream_id).subscribed;
-                stream_data.delete_sub(stream.stream_id);
                 subs.remove_stream(stream.stream_id);
+                stream_data.delete_sub(stream.stream_id);
                 if (was_subscribed) {
                     stream_list.remove_sidebar_row(stream.stream_id);
                 }
@@ -244,43 +276,43 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         }
         break;
 
-    case 'subscription':
-        var person;
-        var email;
+    case 'submessage':
+        // The fields in the event don't quite exactly
+        // match the layout of a submessage, since there's
+        // an event id.  We also want to be explicit here.
+        var submsg = {
+            id: event.submessage_id,
+            sender_id: event.sender_id,
+            msg_type: event.msg_type,
+            message_id: event.message_id,
+            content: event.content,
+        };
+        submessage.handle_event(submsg);
+        break;
 
+    case 'subscription':
         if (event.op === 'add') {
             _.each(event.subscriptions, function (rec) {
                 var sub = stream_data.get_sub_by_id(rec.stream_id);
                 if (sub) {
+                    stream_data.update_stream_email_address(sub, rec.email_address);
                     stream_events.mark_subscribed(sub, rec.subscribers);
                 } else {
                     blueslip.error('Subscribing to unknown stream with ID ' + rec.stream_id);
                 }
             });
         } else if (event.op === 'peer_add') {
-            // TODO: remove email shim here and fix called functions
-            //       to use user_ids
-            person = people.get_person_from_user_id(event.user_id);
-            email = person.email;
             _.each(event.subscriptions, function (sub) {
                 if (stream_data.add_subscriber(sub, event.user_id)) {
-                    $(document).trigger(
-                        'peer_subscribe.zulip',
-                        {stream_name: sub, user_email: email});
+                    $(document).trigger('peer_subscribe.zulip', {stream_name: sub});
                 } else {
                     blueslip.warn('Cannot process peer_add event');
                 }
             });
         } else if (event.op === 'peer_remove') {
-            // TODO: remove email shim here and fix called functions
-            //       to use user_ids
-            person = people.get_person_from_user_id(event.user_id);
-            email = person.email;
             _.each(event.subscriptions, function (sub) {
                 if (stream_data.remove_subscriber(sub, event.user_id)) {
-                    $(document).trigger(
-                        'peer_unsubscribe.zulip',
-                        {stream_name: sub, user_email: email});
+                    $(document).trigger('peer_unsubscribe.zulip', {stream_name: sub});
                 } else {
                     blueslip.warn('Cannot process peer_remove event.');
                 }
@@ -316,6 +348,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
     case 'update_display_settings':
         var user_display_settings = [
             'default_language',
+            'dense_mode',
             'emojiset',
             'high_contrast_mode',
             'night_mode',
@@ -323,6 +356,7 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
             'timezone',
             'twenty_four_hour_time',
             'translate_emoticons',
+            'starred_message_counts',
         ];
         if (_.contains(user_display_settings, event.setting_name)) {
             page_params[event.setting_name] = event.setting;
@@ -341,6 +375,10 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         if (event.setting_name === 'high_contrast_mode') {
             $("body").toggleClass("high-contrast");
         }
+        if (event.setting_name === 'dense_mode') {
+            $("body").toggleClass("less_dense_mode");
+            $("body").toggleClass("more_dense_mode");
+        }
         if (event.setting_name === 'night_mode') {
             $("body").fadeOut(300);
             setTimeout(function () {
@@ -351,6 +389,9 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
                 }
                 $("body").fadeIn(300);
             }, 300);
+        }
+        if (event.setting_name === 'starred_message_counts') {
+            starred_messages.rerender_ui();
         }
         if (event.setting_name === 'left_side_userlist') {
             // TODO: Make this change the view immediately rather
@@ -383,29 +424,18 @@ exports.dispatch_normal_event = function dispatch_normal_event(event) {
         switch (event.flag) {
         case 'starred':
             _.each(event.messages, function (message_id) {
-                ui.update_starred(message_id, new_value);
+                message_flags.update_starred_flag(message_id, new_value);
             });
+            if (event.operation === "add") {
+                starred_messages.add(event.messages);
+            } else {
+                starred_messages.remove(event.messages);
+            }
             break;
         case 'read':
             unread_ops.process_read_messages_event(event.messages);
             break;
         }
-        break;
-
-    case 'delete_message':
-        var msg_id = event.message_id;
-        // message is passed to unread.get_unread_messages,
-        // which returns all the unread messages out of a given list.
-        // So double marking something as read would not occur
-        unread_ops.process_read_messages_event([msg_id]);
-        if (event.message_type === 'stream') {
-            topic_data.remove_message({
-                stream_id: event.stream_id,
-                topic_name: event.topic,
-            });
-            stream_list.update_streams_sidebar();
-        }
-        ui.remove_message(msg_id);
         break;
 
     case 'user_group':
@@ -429,3 +459,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = server_events_dispatch;
 }
+window.server_events_dispatch = server_events_dispatch;

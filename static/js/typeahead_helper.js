@@ -79,14 +79,21 @@ var rendered = { persons: new Dict(), streams: new Dict(), user_groups: new Dict
 
 exports.render_person = function (person) {
     if (person.special_item_text) {
-        return exports.render_typeahead_item({ primary: person.special_item_text });
+        return exports.render_typeahead_item({
+            primary: person.special_item_text,
+            is_person: true,
+        });
     }
 
     var html = rendered.persons.get(person.user_id);
     if (html === undefined) {
+        var avatar_url = people.small_avatar_url_for_person(person);
+
         html = exports.render_typeahead_item({
             primary: person.full_name,
             secondary: person.email,
+            img_src: avatar_url,
+            is_person: true,
         });
         rendered.persons.set(person.user_id, html);
     }
@@ -104,11 +111,20 @@ exports.render_user_group = function (user_group) {
         html = exports.render_typeahead_item({
             primary: user_group.name,
             secondary: user_group.description,
+            is_user_group: true,
         });
         rendered.user_groups.set(user_group.id, html);
     }
 
     return html;
+};
+
+exports.render_person_or_user_group = function (item) {
+    if (user_groups.is_user_group(item)) {
+        return typeahead_helper.render_user_group(item);
+    }
+
+    return typeahead_helper.render_person(item);
 };
 
 exports.render_stream = function (stream) {
@@ -145,9 +161,25 @@ exports.render_emoji = function (item) {
     return exports.render_typeahead_item(args);
 };
 
+// manipulate prefix_sort to select popular emojis first
+// This is kinda a hack and so probably not our long-term solution.
+function emoji_prefix_sort(query, objs, get_item) {
+    var prefix_sort = util.prefix_sort(query, objs, get_item);
+    var popular_emoji_matches = [];
+    var other_emoji_matches = [];
+    prefix_sort.matches.forEach(function (obj) {
+        if (emoji.frequently_used_emojis_list.indexOf(obj.codepoint) !== -1) {
+            popular_emoji_matches.push(obj);
+        } else {
+            other_emoji_matches.push(obj);
+        }
+    });
+    return { matches: popular_emoji_matches.concat(other_emoji_matches), rest: prefix_sort.rest };
+}
+
 exports.sorter = function (query, objs, get_item) {
-   var results = util.prefix_sort(query, objs, get_item);
-   return results.matches.concat(results.rest);
+    var results = util.prefix_sort(query, objs, get_item);
+    return results.matches.concat(results.rest);
 };
 
 exports.compare_by_pms = function (user_a, user_b) {
@@ -177,17 +209,17 @@ exports.compare_by_pms = function (user_a, user_b) {
 };
 
 function compare_for_at_mentioning(person_a, person_b, tertiary_compare, current_stream) {
-    // give preference to "all" or "everyone"
-    if (person_a.email === "all" || person_a.email === "everyone") {
+    // give preference to "all", "everyone" or "stream"
+    if (person_a.email === "all" || person_a.email === "everyone" || person_a.email === "stream") {
         return -1;
-    } else if (person_b.email === "all" || person_b.email === "everyone") {
+    } else if (person_b.email === "all" || person_b.email === "everyone" || person_b.email === "stream") {
         return 1;
     }
 
     // give preference to subscribed users first
     if (current_stream !== undefined) {
-        var a_is_sub = stream_data.user_is_subscribed(current_stream, person_a.email);
-        var b_is_sub = stream_data.user_is_subscribed(current_stream, person_b.email);
+        var a_is_sub = stream_data.is_user_subscribed(current_stream, person_a.user_id);
+        var b_is_sub = stream_data.is_user_subscribed(current_stream, person_b.user_id);
 
         if (a_is_sub && !b_is_sub) {
             return -1;
@@ -265,8 +297,8 @@ exports.sort_languages = function (matches, query) {
 };
 
 exports.sort_recipients = function (users, query, current_stream, current_subject, groups) {
-    var users_name_results =  util.prefix_sort(query, users,
-        function (x) { return x.full_name; });
+    var users_name_results =  util.prefix_sort(
+        query, users, function (x) { return x.full_name; });
     var result = exports.sort_for_at_mentioning(
         users_name_results.matches,
         current_stream,
@@ -280,7 +312,7 @@ exports.sort_recipients = function (users, query, current_stream, current_subjec
     }
 
     var email_results = util.prefix_sort(query, users_name_results.rest,
-        function (x) { return x.email; });
+                                         function (x) { return x.email; });
     result = result.concat(exports.sort_for_at_mentioning(
         email_results.matches,
         current_stream,
@@ -299,7 +331,7 @@ exports.sort_recipients = function (users, query, current_stream, current_subjec
 
 exports.sort_emojis = function (matches, query) {
     // TODO: sort by category in v2
-    var results = util.prefix_sort(query, matches, function (x) { return x.emoji_name; });
+    var results = emoji_prefix_sort(query, matches, function (x) { return x.emoji_name; });
     return results.matches.concat(results.rest);
 };
 
@@ -356,9 +388,30 @@ exports.sort_recipientbox_typeahead = function (query, matches, current_stream) 
     return exports.sort_recipients(matches, query, current_stream);
 };
 
+exports.sort_people_and_user_groups = function (query, matches) {
+    var users = [];
+    var groups = [];
+    _.each(matches, function (match) {
+        if (user_groups.is_user_group(match)) {
+            groups.push(match);
+        } else {
+            users.push(match);
+        }
+    });
+
+    var recipients = typeahead_helper.sort_recipients(
+        users,
+        query,
+        compose_state.stream_name(),
+        compose_state.subject(),
+        groups);
+    return recipients;
+};
+
 return exports;
 
 }());
 if (typeof module !== 'undefined') {
     module.exports = typeahead_helper;
 }
+window.typeahead_helper = typeahead_helper;

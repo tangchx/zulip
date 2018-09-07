@@ -15,9 +15,11 @@ exports.rerender = function () {
     // re-doing a mute or unmute is a pretty recoverable thing.
 
     stream_list.update_streams_sidebar();
-    current_msg_list.rerender_after_muting_changes();
+    if (current_msg_list.muting_enabled) {
+        current_msg_list.update_muting_and_rerender();
+    }
     if (current_msg_list !== home_msg_list) {
-        home_msg_list.rerender_after_muting_changes();
+        home_msg_list.update_muting_and_rerender();
     }
 };
 
@@ -51,18 +53,18 @@ exports.notify_with_undo_option = (function () {
         var $exit = $("#unmute_muted_topic_notification .exit-me");
 
         if (!meta.$mute) {
-          meta.$mute = $("#unmute_muted_topic_notification");
+            meta.$mute = $("#unmute_muted_topic_notification");
 
-          $exit.click(function () {
-              animate.fadeOut();
-          });
+            $exit.click(function () {
+                animate.fadeOut();
+            });
 
-          meta.$mute.find("#unmute").click(function () {
-              // it should reference the meta variable and not get stuck with
-              // a pass-by-value of stream, topic.
-              exports.unmute(meta.stream, meta.topic);
-              animate.fadeOut();
-          });
+            meta.$mute.find("#unmute").click(function () {
+                // it should reference the meta variable and not get stuck with
+                // a pass-by-value of stream, topic.
+                exports.unmute(meta.stream, meta.topic);
+                animate.fadeOut();
+            });
         }
 
         meta.stream = stream;
@@ -70,8 +72,8 @@ exports.notify_with_undo_option = (function () {
         // add a four second delay before closing up.
         meta.hide_me_time = new Date().getTime() + 4000;
 
-        meta.$mute.find(".topic").html(topic);
-        meta.$mute.find(".stream").html(stream);
+        meta.$mute.find(".topic").text(topic);
+        meta.$mute.find(".stream").text(stream);
 
         animate.fadeIn();
 
@@ -182,9 +184,9 @@ exports.toggle_mute = function (msg) {
     }
 };
 
-$(function () {
+exports.initialize = function () {
     exports.update_muted_topics(page_params.muted_topics);
-});
+};
 
 return exports;
 }());
@@ -192,3 +194,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = muting_ui;
 }
+window.muting_ui = muting_ui;

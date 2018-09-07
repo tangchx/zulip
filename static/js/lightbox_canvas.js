@@ -1,3 +1,5 @@
+/* eslint indent: "off" */
+
 var LightboxCanvas = (function () {
     var events = {
         documentMouseup: [],
@@ -32,6 +34,12 @@ var LightboxCanvas = (function () {
 
     var funcs = {
         setZoom: function (meta, zoom) {
+            // condition to handle zooming event by zoom hotkeys
+            if (zoom === '+') {
+                zoom = meta.zoom * 1.2;
+            } else if (zoom === '-') {
+                zoom = meta.zoom / 1.2;
+            }
             // make sure the zoom is above 1 and below the maxZoom.
             meta.zoom = Math.min(Math.max(zoom, 1), meta.maxZoom);
         },
@@ -58,8 +66,8 @@ var LightboxCanvas = (function () {
             // where the last `layerX` and `layerY` movements since the last
             // `mousemove` event in this `mousedown` event were registered.
             var polyfillMouseMovement = function (e) {
-                e.movementX = (e.layerX - lastPosition.x) || 0;
-                e.movementY = (e.layerY - lastPosition.y) || 0;
+                e.movementX = e.layerX - lastPosition.x || 0;
+                e.movementY = e.layerY - lastPosition.y || 0;
 
                 lastPosition = {
                     x: e.layerX,
@@ -95,7 +103,7 @@ var LightboxCanvas = (function () {
                 // normalizedDelta = delta * (1 / 20) * 1 = 0.4
                 // zoom = zoom * (0.4 / 100) + 1
                 var zoom = meta.zoom * (
-                    (meta.speed * meta.internalSpeedMultiplier * delta / 100) + 1
+                    meta.speed * meta.internalSpeedMultiplier * delta / 100 + 1
                 );
 
                 funcs.setZoom(meta, zoom);
@@ -118,8 +126,8 @@ var LightboxCanvas = (function () {
                     // find the percent of movement relative to the canvas width
                     // since e.movementX, e.movementY are in px.
                     var percentMovement = {
-                        x: (e.movementX / canvas.width),
-                        y: (e.movementY / canvas.height),
+                        x: e.movementX / canvas.width,
+                        y: e.movementY / canvas.height,
                     };
 
                     // add the percentMovement to the meta coordinates but divide
@@ -132,6 +140,31 @@ var LightboxCanvas = (function () {
                     funcs.displayImage(canvas, context, meta);
                 }
             });
+
+            // event listener to handle zoom in and out from using keyboard keys z/Z and +/-
+            // in the canvas
+            // these hotkeys are not implemented in static/js/hotkey.js as the code in
+            // static/js/lightbox_canvas.js and static/js/lightbox.js isn't written a way
+            // that the LightboxCanvas instance created in lightbox.js can be
+            // accessed from hotkey.js. Major code refactoring is required in lightbox.js
+            // to implement these keyboard shortcuts in hotkey.js
+            document.addEventListener('keydown', function (e) {
+                if (!overlays.lightbox_open()) {
+                    return;
+                }
+                if (e.key === "Z" || e.key === '+') {
+                    funcs.setZoom(meta, '+');
+                    funcs.displayImage(canvas, context, meta);
+                } else if (e.key === "z" || e.key === '-') {
+                    funcs.setZoom(meta, '-');
+                    funcs.displayImage(canvas, context, meta);
+                } else if (e.key === 'v') {
+                    overlays.close_overlay('lightbox');
+                }
+                e.preventDefault();
+                e.stopPropagation();
+            });
+
 
             // make sure that when the mousedown is lifted on <canvas>to prevent
             // panning events.
@@ -170,18 +203,18 @@ var LightboxCanvas = (function () {
 
         displayImage: function (canvas, context, meta) {
             meta.coords.x = Math.max(1 / (meta.zoom * 2), meta.coords.x);
-            meta.coords.x = Math.min(1 - (1 / (meta.zoom * 2)), meta.coords.x);
+            meta.coords.x = Math.min(1 - 1 / (meta.zoom * 2), meta.coords.x);
 
             meta.coords.y = Math.max(1 / (meta.zoom * 2), meta.coords.y);
-            meta.coords.y = Math.min(1 - (1 / (meta.zoom * 2)), meta.coords.y);
+            meta.coords.y = Math.min(1 - 1 / (meta.zoom * 2), meta.coords.y);
 
             var c = {
                 x: meta.coords.x - 1,
                 y: meta.coords.y - 1,
             };
 
-            var x = (meta.zoom * c.x * canvas.width) + canvas.width / 2;
-            var y = (meta.zoom * c.y * canvas.height) + canvas.height / 2;
+            var x = meta.zoom * c.x * canvas.width + canvas.width / 2;
+            var y = meta.zoom * c.y * canvas.height + canvas.height / 2;
             var w = canvas.width * meta.zoom;
             var h = canvas.height * meta.zoom;
 
@@ -213,7 +246,7 @@ var LightboxCanvas = (function () {
                 canvas.style.width = parent.width + "px";
 
 
-                canvas.height = (parent.width / meta.ratio) * 2;
+                canvas.height = parent.width / meta.ratio * 2;
                 canvas.style.height = parent.width / meta.ratio + "px";
             } else {
                 canvas.height = parent.height * 2;
@@ -302,3 +335,4 @@ var LightboxCanvas = (function () {
 if (typeof module !== 'undefined') {
     module.exports = LightboxCanvas;
 }
+window.LightboxCanvas = LightboxCanvas;

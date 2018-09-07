@@ -3,7 +3,7 @@ from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta
 import logging
 from typing import Any, Callable, Dict, List, \
-    Optional, Text, Tuple, Type, Union
+    Optional, Tuple, Type, Union
 
 from django.conf import settings
 from django.db import connection, models
@@ -15,7 +15,7 @@ from analytics.models import Anomaly, BaseCount, \
 from zerver.lib.logging_util import log_to_file
 from zerver.lib.timestamp import ceiling_to_day, \
     ceiling_to_hour, floor_to_hour, verify_UTC
-from zerver.models import Message, Realm, RealmAuditLog, \
+from zerver.models import Message, Realm, \
     Stream, UserActivityInterval, UserProfile, models
 
 ## Logging setup ##
@@ -48,7 +48,7 @@ class CountStat:
         else:  # frequency == CountStat.DAY
             self.interval = timedelta(days=1)
 
-    def __str__(self) -> Text:
+    def __str__(self) -> str:
         return "<CountStat: %s>" % (self.property,)
 
 class LoggingCountStat(CountStat):
@@ -513,6 +513,9 @@ count_stats_ = [
     # User Activity stats
     # Stats that measure user activity in the UserActivityInterval sense.
 
+    CountStat('1day_actives::day',
+              sql_data_collector(UserCount, check_useractivityinterval_by_user_query, None),
+              CountStat.DAY, interval=timedelta(days=1)-UserActivityInterval.MIN_INTERVAL_LENGTH),
     CountStat('15day_actives::day',
               sql_data_collector(UserCount, check_useractivityinterval_by_user_query, None),
               CountStat.DAY, interval=timedelta(days=15)-UserActivityInterval.MIN_INTERVAL_LENGTH),

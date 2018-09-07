@@ -12,7 +12,7 @@ import re
 from lib import sanity_check
 sanity_check.check_venv(__file__)
 
-from typing import IO, Text
+from typing import IO
 
 # TODO: Convert this to use scripts/lib/queue_workers.py
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -86,7 +86,7 @@ if __name__ == '__main__':
     logfile.seek(0)
 
     print("Attempting to modify a file")
-    subprocess.call(['touch', 'zerver/lib/actions.py'])
+    os.utime('zerver/lib/actions.py')
     failed = check_worker_launch(logfile_name)
 
     run_dev.send_signal(signal.SIGINT)

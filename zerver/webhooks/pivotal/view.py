@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Text, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import ujson
 from defusedxml.ElementTree import fromstring as xml_fromstring
@@ -12,10 +12,11 @@ from django.utils.translation import ugettext as _
 from zerver.decorator import api_key_only_webhook_view
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_error, json_success
-from zerver.lib.webhooks.common import check_send_webhook_message
+from zerver.lib.webhooks.common import check_send_webhook_message, \
+    UnexpectedWebhookEventType
 from zerver.models import UserProfile
 
-def api_pivotal_webhook_v3(request: HttpRequest, user_profile: UserProfile) -> Tuple[Text, Text]:
+def api_pivotal_webhook_v3(request: HttpRequest, user_profile: UserProfile) -> Tuple[str, str]:
     payload = xml_fromstring(request.body)
 
     def get_text(attrs: List[str]) -> str:
@@ -68,7 +69,18 @@ def api_pivotal_webhook_v3(request: HttpRequest, user_profile: UserProfile) -> T
             more_info)
     return subject, content
 
-def api_pivotal_webhook_v5(request: HttpRequest, user_profile: UserProfile) -> Tuple[Text, Text]:
+UNSUPPORTED_EVENT_TYPES = [
+    "task_create_activity",
+    "comment_delete_activity",
+    "task_delete_activity",
+    "task_update_activity",
+    "story_move_from_project_activity",
+    "story_delete_activity",
+    "story_move_into_project_activity",
+    "epic_update_activity",
+]
+
+def api_pivotal_webhook_v5(request: HttpRequest, user_profile: UserProfile) -> Tuple[str, str]:
     payload = ujson.loads(request.body)
 
     event_type = payload["kind"]
@@ -78,7 +90,7 @@ def api_pivotal_webhook_v5(request: HttpRequest, user_profile: UserProfile) -> T
 
     primary_resources = payload["primary_resources"][0]
     story_url = primary_resources["url"]
-    story_type = primary_resources["story_type"]
+    story_type = primary_resources.get("story_type")
     story_id = primary_resources["id"]
     story_name = primary_resources["name"]
 
@@ -92,7 +104,7 @@ def api_pivotal_webhook_v5(request: HttpRequest, user_profile: UserProfile) -> T
     content = ""
     subject = "#%s: %s" % (story_id, story_name)
 
-    def extract_comment(change: Dict[str, Any]) -> Optional[Text]:
+    def extract_comment(change: Dict[str, Any]) -> Optional[str]:
         if change.get("kind") == "comment":
             return change.get("new_values", {}).get("text", None)
         return None
@@ -145,14 +157,11 @@ def api_pivotal_webhook_v5(request: HttpRequest, user_profile: UserProfile) -> T
             if "current_state" in old_values and "current_state" in new_values:
                 content += " from **%s** to **%s**" % (old_values["current_state"],
                                                        new_values["current_state"])
-    elif event_type in ["task_create_activity", "comment_delete_activity",
-                        "task_delete_activity", "task_update_activity",
-                        "story_move_from_project_activity", "story_delete_activity",
-                        "story_move_into_project_activity"]:
+    elif event_type in UNSUPPORTED_EVENT_TYPES:
         # Known but unsupported Pivotal event types
         pass
     else:
-        logging.warning("Unknown Pivotal event type: %s" % (event_type,))
+        raise UnexpectedWebhookEventType('Pivotal Tracker', event_type)
 
     return subject, content
 

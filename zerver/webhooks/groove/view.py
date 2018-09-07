@@ -1,5 +1,5 @@
 # Webhooks for external integrations.
-from typing import Any, Dict, Optional, Text
+from typing import Any, Dict, Optional
 
 from django.http import HttpRequest, HttpResponse
 from django.utils.translation import ugettext as _
@@ -9,15 +9,16 @@ import logging
 from zerver.decorator import api_key_only_webhook_view
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_error, json_success
-from zerver.lib.webhooks.common import check_send_webhook_message
+from zerver.lib.webhooks.common import check_send_webhook_message, \
+    validate_extract_webhook_http_header
 from zerver.models import UserProfile
 
-def ticket_started_body(payload: Dict[str, Any]) -> Text:
+def ticket_started_body(payload: Dict[str, Any]) -> str:
     body = u'New ticket from {customer_name}'
     body += u"\n```quote\n**[Ticket #{number}: {title}]({app_url})**\n{summary}\n```"
     return body.format(**payload)
 
-def ticket_assigned_body(payload: Dict[str, Any]) -> Optional[Text]:
+def ticket_assigned_body(payload: Dict[str, Any]) -> Optional[str]:
     # Take the state, assignee, and assigned group from the payload.
     state = payload['state']
     assignee = payload['assignee']
@@ -45,7 +46,7 @@ def ticket_assigned_body(payload: Dict[str, Any]) -> Optional[Text]:
     else:
         return None
 
-def agent_replied_body(payload: Dict[str, Any]) -> Text:
+def agent_replied_body(payload: Dict[str, Any]) -> str:
     # Take the agent's email and the ticket number from the payload.
     agent = payload['links']['author']['href'].split("http://api.groovehq.com/v1/agents/")[1]
     number = payload['links']['ticket']['href'].split("http://api.groovehq.com/v1/tickets/")[1]
@@ -55,7 +56,7 @@ def agent_replied_body(payload: Dict[str, Any]) -> Text:
     body += u"({app_ticket_url})**\n{plain_text_body}\n```"
     return body.format(**payload)
 
-def customer_replied_body(payload: Dict[str, Any]) -> Text:
+def customer_replied_body(payload: Dict[str, Any]) -> str:
     # Take the customer's email and the ticket number from the payload.
     customer = payload['links']['author']['href'].split("http://api.groovehq.com/v1/customers/")[1]
     number = payload['links']['ticket']['href'].split("http://api.groovehq.com/v1/tickets/")[1]
@@ -65,7 +66,7 @@ def customer_replied_body(payload: Dict[str, Any]) -> Text:
     body += u"({app_ticket_url})**\n{plain_text_body}\n```"
     return body.format(**payload)
 
-def note_added_body(payload: Dict[str, Any]) -> Text:
+def note_added_body(payload: Dict[str, Any]) -> str:
     # Take the agent's email and the ticket number from the payload.
     agent = payload['links']['author']['href'].split("http://api.groovehq.com/v1/agents/")[1]
     number = payload['links']['ticket']['href'].split("http://api.groovehq.com/v1/tickets/")[1]
@@ -79,12 +80,8 @@ def note_added_body(payload: Dict[str, Any]) -> Text:
 @has_request_variables
 def api_groove_webhook(request: HttpRequest, user_profile: UserProfile,
                        payload: Dict[str, Any]=REQ(argument_type='body')) -> HttpResponse:
-    try:
-        # The event identifier is stored in the X_GROOVE_EVENT header.
-        event = request.META['X_GROOVE_EVENT']
-    except KeyError:
-        logging.error('No header with the Groove payload')
-        return json_error(_('Missing event header'))
+    event = validate_extract_webhook_http_header(request, 'X_GROOVE_EVENT', 'Groove')
+
     # We listen to several events that are used for notifications.
     # Other events are ignored.
     if event in EVENTS_FUNCTION_MAPPER:

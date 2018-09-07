@@ -12,6 +12,7 @@ Subsystems Documentation
    custom-apps
    pointer
    markdown
+   caching
    realms
    management-commands
    front-end-build-process
@@ -22,7 +23,7 @@ Subsystems Documentation
    emoji
    hotspots
    full-text-search
-   oauth
+   auth
    email
    analytics
    html-templates
@@ -30,11 +31,16 @@ Subsystems Documentation
    logging
    typing-indicators
    users
+   guest-users
    release-checklist
    api-release-checklist
-   swagger-api-docs
+   openapi-api-docs
    documentation
    conversion
    input-pills
+   thumbnailing
+   presence
    unread_messages
+   billing
    user-docs
+   widgets

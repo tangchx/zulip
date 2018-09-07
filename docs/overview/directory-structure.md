@@ -25,7 +25,7 @@ paths will be familiar to Django developers.
 
 * `zerver/views/*.py` Most [Django views](https://docs.djangoproject.com/en/1.8/topics/http/views/).
 
-* `zerver/webhooks/` Webhook views and tests for [Zulip webhook integrations](
+* `zerver/webhooks/` Webhook views and tests for [Zulip's incoming webhook integrations](
   https://zulipchat.com/api/integration-guide).
 
 * `zerver/tornado/views.py` Tornado views.
@@ -46,7 +46,7 @@ See [our docs](../subsystems/html-templates.html) for details on Zulip's
 templating systems.
 
 * `templates/zerver/` For [Jinja2](http://jinja.pocoo.org/) templates
-  for the backend (for zerver app).
+  for the backend (for zerver app; logged-in content is in `templates/zerver/app`).
 
 * `static/templates/` [Handlebars](http://handlebarsjs.com/) templates for the frontend.
 

@@ -20,7 +20,7 @@ function find_boundary_tr(initial_tr, iterate_row) {
     // To ensure we can't enter an infinite loop, bail out (and let the
     // browser handle the copy-paste on its own) if we don't hit what we
     // are looking for within 10 rows.
-    for (j = 0; (!tr.is('.message_row')) && j < 10; j += 1) {
+    for (j = 0; !tr.is('.message_row') && j < 10; j += 1) {
         tr = iterate_row(tr);
     }
     if (j === 10) {
@@ -37,9 +37,9 @@ function find_boundary_tr(initial_tr, iterate_row) {
 
 function construct_recipient_header(message_row) {
     var message_header_content = rows.get_message_recipient_header(message_row)
-                                     .text()
-                                     .replace(/\s+/g, " ")
-                                     .replace(/^\s/, "").replace(/\s$/, "");
+        .text()
+        .replace(/\s+/g, " ")
+        .replace(/^\s/, "").replace(/\s$/, "");
     return $('<p>').append($('<strong>').text(message_header_content));
 }
 
@@ -50,9 +50,7 @@ function construct_copy_div(div, start_id, end_id) {
     var should_include_start_recipient_header = false;
 
     var last_recipient_row_id = start_recipient_row_id;
-    for (var row = start_row;
-         rows.id(row) <= end_id;
-         row = rows.next_visible(row)) {
+    for (var row = start_row; rows.id(row) <= end_id; row = rows.next_visible(row)) {
         var recipient_row_id = rows.id_for_recipient_row(rows.get_message_recipient_row(row));
         // if we found a message from another recipient,
         // it means that we have messages from several recipients,
@@ -136,17 +134,10 @@ function copy_handler() {
         construct_copy_div(div, start_id, end_id);
     }
 
-    if (window.bridge !== undefined) {
-        // If the user is running the desktop app,
-        // convert emoji images to plain text for
-        // copy-paste purposes.
-        ui.replace_emoji_with_text(div);
-    }
-
     // Select div so that the browser will copy it
     // instead of copying the original selection
     div.css({position: 'absolute', left: '-99999px'})
-            .attr('id', 'copytempdiv');
+        .attr('id', 'copytempdiv');
     $('body').append(div);
     selection.selectAllChildren(div[0]);
 
@@ -208,7 +199,11 @@ exports.paste_handler_converter = function (paste_html) {
     var div = document.createElement("div");
     div.innerHTML = markdown_html;
     // Using textContent for modern browsers, innerText works for Internet Explorer
-    return div.textContent || div.innerText || "";
+    var markdown_text = div.textContent || div.innerText || "";
+    markdown_text = markdown_text.trim();
+    // Removes newlines before the start of a list and between list elements.
+    markdown_text = markdown_text.replace(/\n+([*+-])/g, '\n$1');
+    return markdown_text;
 };
 
 exports.paste_handler = function (event) {
@@ -224,7 +219,7 @@ exports.paste_handler = function (event) {
 
     if (clipboardData.getData) {
         var paste_html = clipboardData.getData('text/html');
-        if (paste_html) {
+        if (paste_html && page_params.development_environment) {
             event.preventDefault();
             var text = exports.paste_handler_converter(paste_html);
             compose_ui.insert_syntax_and_focus(text);
@@ -232,10 +227,10 @@ exports.paste_handler = function (event) {
     }
 };
 
-$(function () {
+exports.initialize = function () {
     $(document).on('copy', copy_handler);
     $("#compose-textarea").bind('paste', exports.paste_handler);
-});
+};
 
 return exports;
 }());
@@ -243,3 +238,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = copy_and_paste;
 }
+window.copy_and_paste = copy_and_paste;

@@ -2,7 +2,7 @@
 
 from django.core.exceptions import ValidationError
 from django.db.utils import IntegrityError
-from typing import Optional, Text
+from typing import Optional
 
 from zerver.lib.actions import do_change_is_admin, \
     do_change_realm_domain, do_create_realm, \
@@ -93,25 +93,25 @@ class RealmDomainTest(ZulipTestCase):
         result = self.client_delete("/json/realm/domains/acme.com")
         self.assert_json_success(result)
         self.assertFalse(RealmDomain.objects.filter(domain='acme.com').exists())
-        self.assertTrue(realm.restricted_to_domain)
+        self.assertTrue(realm.emails_restricted_to_domains)
 
     def test_delete_all_realm_domains(self) -> None:
         self.login(self.example_email("iago"))
         realm = get_realm('zulip')
         query = RealmDomain.objects.filter(realm=realm)
 
-        self.assertTrue(realm.restricted_to_domain)
+        self.assertTrue(realm.emails_restricted_to_domains)
         for realm_domain in query.all():
             do_remove_realm_domain(realm_domain)
         self.assertEqual(query.count(), 0)
-        # Deleting last realm_domain should set `restricted_to_domain` to False.
+        # Deleting last realm_domain should set `emails_restricted_to_domains` to False.
         # This should be tested on a fresh instance, since the cached objects
         # would not be updated.
-        self.assertFalse(get_realm('zulip').restricted_to_domain)
+        self.assertFalse(get_realm('zulip').emails_restricted_to_domains)
 
     def test_email_allowed_for_realm(self) -> None:
-        realm1 = do_create_realm('testrealm1', 'Test Realm 1', restricted_to_domain=True)
-        realm2 = do_create_realm('testrealm2', 'Test Realm 2', restricted_to_domain=True)
+        realm1 = do_create_realm('testrealm1', 'Test Realm 1', emails_restricted_to_domains=True)
+        realm2 = do_create_realm('testrealm2', 'Test Realm 2', emails_restricted_to_domains=True)
 
         realm_domain = RealmDomain.objects.create(realm=realm1, domain='test1.com', allow_subdomains=False)
         RealmDomain.objects.create(realm=realm2, domain='test2.test1.com', allow_subdomains=True)
@@ -137,7 +137,7 @@ class RealmDomainTest(ZulipTestCase):
 
     def test_validate_domain(self) -> None:
         invalid_domains = ['', 'test', 't.', 'test.', '.com', '-test', 'test...com',
-                           'test-', 'test_domain.com', 'test.-domain.com']
+                           'test-', 'test_domain.com', 'test.-domain.com', 'a' * 255 + ".com"]
         for domain in invalid_domains:
             with self.assertRaises(ValidationError):
                 validate_domain(domain)

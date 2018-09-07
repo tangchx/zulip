@@ -4,8 +4,7 @@ Bots and integrations are features that are accessible to all members of an orga
 
 ## Add a bot
 
-{!go-to-the.md!} [Your bots](/#settings/your-bots)
-{!settings.md!}
+{settings_tab|your-bots}
 
 2. On this page, under the **Add a new bot** view, enter the bot type,
    a name, an email, and optionally an avatar for your bot.
@@ -52,7 +51,7 @@ You can create three types of bots:
   to this Endpoint URL.
   Choose this type if you want to:
     * make Zulip post messages to a URL.
-    * deploy Zulip's [botserver](https://github.com/zulip/python-zulip-api/tree/master/zulip_botserver).
+    * deploy Zulip's [Botserver](/api/deploying-bots).
       *This is the default way of deploying bots used in production.*
 
 ## Add an integration

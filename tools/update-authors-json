@@ -8,15 +8,15 @@ JSON data for the /team page contributors section.
 from lib import sanity_check
 sanity_check.check_venv(__file__)
 
-from typing import Any, Dict, List, Optional, Union, Text, cast
+from typing import Any, Dict, List, Optional, Union, cast
 from mypy_extensions import TypedDict
 
 import os
+import shutil
 import sys
 import argparse
 from time import sleep
 from datetime import date
-import subprocess
 
 import requests
 import json
@@ -26,8 +26,9 @@ os.environ['DJANGO_SETTINGS_MODULE'] = 'zproject.settings'
 from django.conf import settings
 from zerver.lib.utils import split_by
 
-FIXTURE_FILE = os.path.join(os.path.dirname(__file__), '../zerver/fixtures/authors.json')
-duplicate_commits_file = os.path.join(os.path.dirname(__file__), '../zerver/fixtures/duplicate_commits.json')
+FIXTURE_FILE = os.path.join(os.path.dirname(__file__), '../zerver/tests/fixtures/authors.json')
+duplicate_commits_file = os.path.join(os.path.dirname(__file__),
+                                      '../zerver/tests/fixtures/duplicate_commits.json')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--max-retries', type=int, default=3,
@@ -48,13 +49,13 @@ ContributorsJSON = TypedDict('ContributorsJSON', {
 
 
 def fetch_contributors(repo_link: str) -> Optional[List[Dict[str, Dict[str, Any]]]]:
-    r = requests.get(repo_link)  # type: requests.Response
+    r = requests.get(repo_link, verify=os.environ.get('CUSTOM_CA_CERTIFICATES'))  # type: requests.Response
     return r.json() if r.status_code == 200 else None
 
 def write_to_disk(json_data: ContributorsJSON, out_file: str) -> None:
     with open(out_file, 'w') as f:
         try:
-            f.write("{}\n".format(json.dumps(json_data)))
+            f.write("{}\n".format(json.dumps(json_data, indent=2, sort_keys=True)))
         except IOError as e:
             print(e)
             sys.exit(1)
@@ -66,6 +67,10 @@ def run_production() -> None:
     dictionary. Retry fetching each repository if responded with non HTTP 200
     status.
     """
+
+    # This dictionary should hold all repositories that should be included in
+    # the total count, including those that should *not* have tabs on the team
+    # page (e.g. if they are deprecated).
     repositories = {
         'server': 'https://api.github.com/repos/zulip/zulip/stats/contributors',
         'desktop': 'https://api.github.com/repos/zulip/zulip-electron/stats/contributors',
@@ -74,6 +79,8 @@ def run_production() -> None:
         'zulip-js': 'https://api.github.com/repos/zulip/zulip-js/stats/contributors',
         'zulipbot': 'https://api.github.com/repos/zulip/zulipbot/stats/contributors',
         'terminal': 'https://api.github.com/repos/zulip/zulip-terminal/stats/contributors',
+        'zulip-ios-legacy': 'https://api.github.com/repos/zulip/zulip-ios-legacy/stats/contributors',
+        'zulip-android': 'https://api.github.com/repos/zulip/zulip-android/stats/contributors',
     }
 
     data = dict(date=str(date.today()), contrib=[])  # type: ContributorsJSON
@@ -143,10 +150,10 @@ def run_production() -> None:
 
 def copy_fixture() -> None:
     """
-    Copy test fixture file from zerver/fixtures. This is used to avoid
+    Copy test fixture file from zerver/tests/fixtures. This is used to avoid
     constantly fetching data from Github during testing.
     """
-    subprocess.check_call(['cp', FIXTURE_FILE, settings.CONTRIBUTORS_DATA])
+    shutil.copyfile(FIXTURE_FILE, settings.CONTRIBUTORS_DATA)
 
 
 if args.use_fixture:

@@ -4,7 +4,6 @@ zrequire('people');
 zrequire('message_store');
 
 var noop = function () {};
-var with_overrides = global.with_overrides;
 var people = global.people;
 
 set_global('$', global.make_zjquery());
@@ -27,7 +26,7 @@ set_global('page_params', {
     is_admin: true,
 });
 
-set_global('blueslip', {});
+set_global('blueslip', global.make_zblueslip());
 
 var me = {
     email: 'me@example.com',
@@ -60,7 +59,7 @@ people.add_in_realm(cindy);
 
 global.people.initialize_current_user(me.user_id);
 
-(function test_add_message_metadata() {
+run_test('add_message_metadata', () => {
     var message = {
         sender_email: 'me@example.com',
         sender_id: me.user_id,
@@ -101,57 +100,41 @@ global.people.initialize_current_user(me.user_id);
         sender_email: 'me@example.com',
         sender_id: me.user_id,
         type: 'stream',
-        display_recipient: [me, cindy],
-        stream: 'Zoolippy',
+        display_recipient: 'Zoolippy',
         topic: 'cool thing',
         subject: 'the_subject',
         id: 2068,
     };
 
-    // test stream properties
-    with_overrides(function (override) {
-        override('compose.empty_topic_placeholder', function () {
-            return 'the_subject';
-        });
-        global.with_stub(function (stub) {
-            set_global('composebox_typeahead', {add_topic: stub.f});
-            message_store.set_message_booleans(message);
-            message_store.add_message_metadata(message);
-            var typeahead_added = stub.get_args('stream', 'subject');
-            assert.deepEqual(typeahead_added.stream, [me, cindy]);
-            assert.equal(message.subject, typeahead_added.subject);
-        });
+    message_store.set_message_booleans(message);
+    message_store.add_message_metadata(message);
+    assert.deepEqual(message.stream, message.display_recipient);
+    assert.equal(message.reply_to, 'me@example.com');
+    assert.deepEqual(message.flags, undefined);
+    assert.equal(message.alerted, false);
+});
 
-        assert.deepEqual(message.stream, [me, cindy]);
-        assert.equal(message.reply_to, 'me@example.com');
-        assert.deepEqual(message.flags, undefined);
-        assert.equal(message.alerted, false);
-    });
-
-}());
-
-(function test_errors() {
+run_test('errors', () => {
     // Test a user that doesn't exist
     var message = {
         type: 'private',
         display_recipient: [{user_id: 92714}],
     };
 
-    var blueslip_errors = 0;
-    blueslip.error = function () {
-        blueslip_errors += 1;
-    };
+    blueslip.set_test_data('error', 'Unknown user_id in get_person_from_user_id: 92714');
+    blueslip.set_test_data('error', 'Unknown user id 92714'); // From person.js
 
     // Expect each to throw two blueslip errors
     // One from message_store.js, one from person.js
     var emails = message_store.get_pm_emails(message);
     assert.equal(emails, '?');
-    assert.equal(blueslip_errors, 2);
+    assert.equal(blueslip.get_test_logs('error').length, 2);
 
-    blueslip_errors = 0;
     var names = message_store.get_pm_full_names(message);
     assert.equal(names, '?');
-    assert.equal(blueslip_errors, 2);
+    assert.equal(blueslip.get_test_logs('error').length, 4);
+
+    blueslip.clear_test_data();
 
     message = {
         type: 'stream',
@@ -167,9 +150,9 @@ global.people.initialize_current_user(me.user_id);
     });
     message_store.process_message_for_recent_private_messages(message);
     assert.equal(num_partner, 0);
-}());
+});
 
-(function test_update_booleans() {
+run_test('update_booleans', () => {
     var message = {};
 
     // First, test fields that we do actually want to update.
@@ -199,9 +182,9 @@ global.people.initialize_current_user(me.user_id);
     flags = ['read'];
     message_store.update_booleans(message, flags);
     assert.equal(message.unread, true);
-}());
+});
 
-(function test_message_id_change() {
+run_test('message_id_change', () => {
     var message = {
         sender_email: 'me@example.com',
         sender_id: me.user_id,
@@ -241,4 +224,4 @@ global.people.initialize_current_user(me.user_id);
         assert.equal(msg_id.new, 402);
     });
 
-}());
+});

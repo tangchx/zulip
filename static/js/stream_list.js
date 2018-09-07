@@ -2,6 +2,8 @@ var stream_list = (function () {
 
 var exports = {};
 
+var has_scrolled = false;
+
 exports.update_count_in_dom = function (unread_count_elem, count) {
     var count_span = unread_count_elem.find('.count');
     var value_span = count_span.find('.value');
@@ -63,6 +65,7 @@ function get_search_term() {
 exports.remove_sidebar_row = function (stream_id) {
     exports.stream_sidebar.remove_row(stream_id);
     exports.build_stream_list();
+    exports.stream_cursor.redraw();
 };
 
 exports.create_initial_sidebar_rows = function () {
@@ -178,11 +181,11 @@ function zoom_in(options) {
 function zoom_out(options) {
     popovers.hide_all();
     topic_list.zoom_out();
+    exports.show_all_streams();
 
     if (options.stream_li) {
         exports.scroll_stream_into_view(options.stream_li);
     }
-    exports.show_all_streams();
 }
 
 exports.show_all_streams = function () {
@@ -214,14 +217,15 @@ exports.set_in_home_view = function (stream_id, in_home) {
 
 function build_stream_sidebar_li(sub) {
     var name = sub.name;
-    var args = {name: name,
-                id: sub.stream_id,
-                uri: narrow.by_stream_uri(name),
-                not_in_home_view: (stream_data.in_home_view(sub.stream_id) === false),
-                invite_only: sub.invite_only,
-                color: stream_data.get_color(name),
-                pin_to_top: sub.pin_to_top,
-               };
+    var args = {
+        name: name,
+        id: sub.stream_id,
+        uri: hash_util.by_stream_uri(name),
+        not_in_home_view: stream_data.in_home_view(sub.stream_id) === false,
+        invite_only: sub.invite_only,
+        color: stream_data.get_color(name),
+        pin_to_top: sub.pin_to_top,
+    };
     args.dark_background = stream_color.get_color_class(args.color);
     var list_item = $(templates.render('stream_sidebar_row', args));
     return list_item;
@@ -301,15 +305,9 @@ function set_stream_unread_count(stream_id, count) {
 
 exports.update_streams_sidebar = function () {
     exports.build_stream_list();
+    exports.stream_cursor.redraw();
 
-    // highlight new top stream
-    $('#stream_filters li.highlighted_stream').removeClass('highlighted_stream');
-    if (exports.searching()) {
-        var all_streams = $('#stream_filters li.narrow-filter');
-        exports.highlight_first(all_streams, 'highlighted_stream');
-    }
-
-    if (! narrow_state.active()) {
+    if (!narrow_state.active()) {
         return;
     }
 
@@ -387,7 +385,7 @@ exports.get_sidebar_stream_topic_info  = function (filter) {
     result.stream_id = stream_id;
 
     var op_subject = filter.operands('topic');
-    result.topic_selected = (op_subject.length === 1);
+    result.topic_selected = op_subject.length === 1;
 
     return result;
 };
@@ -448,6 +446,41 @@ exports.handle_narrow_deactivated = function () {
     clear_topics();
 };
 
+function focus_stream_filter(e) {
+    exports.stream_cursor.reset();
+    e.stopPropagation();
+}
+
+function keydown_enter_key() {
+    var stream_id = exports.stream_cursor.get_key();
+
+    if (stream_id === undefined) {
+        // This can happen for empty searches, no need to warn.
+        return;
+    }
+
+    var sub = stream_data.get_sub_by_id(stream_id);
+
+    if (sub === undefined) {
+        blueslip.error('Unknown stream_id for search/enter: ' + stream_id);
+        return;
+    }
+
+    if (overlays.is_active()) {
+        ui_util.change_tab_to('#home');
+    }
+    exports.clear_and_hide_search();
+    narrow.by('stream', sub.name, {trigger: 'sidebar enter key'});
+}
+
+function actually_update_streams_for_search() {
+    exports.update_streams_sidebar();
+    resize.resize_page_components();
+    exports.stream_cursor.reset();
+}
+
+var update_streams_for_search = _.throttle(actually_update_streams_for_search, 50);
+
 exports.initialize = function () {
     // TODO, Eventually topic_list won't be a big singleton,
     // and we can create more component-based click handlers for
@@ -460,6 +493,7 @@ exports.initialize = function () {
     $(document).on('subscription_add_done.zulip', function (event) {
         exports.create_sidebar_row(event.sub);
         exports.build_stream_list();
+        exports.stream_cursor.redraw();
     });
 
     $(document).on('subscription_remove_done.zulip', function (event) {
@@ -477,7 +511,7 @@ exports.initialize = function () {
         var stream_id = $(e.target).parents('li').attr('data-stream-id');
         var sub = stream_data.get_sub_by_id(stream_id);
         popovers.hide_all();
-        narrow.by('stream', sub.name, {select_first_unread: true, trigger: 'sidebar'});
+        narrow.by('stream', sub.name, {trigger: 'sidebar'});
 
         exports.clear_and_hide_search();
 
@@ -485,14 +519,58 @@ exports.initialize = function () {
         e.stopPropagation();
     });
 
+    $('#clear_search_stream_button').on('click', exports.clear_search);
+
+    $("#streams_header").expectOne().click(function (e) {
+        exports.toggle_filter_displayed(e);
+    });
+
+    // check for user scrolls on streams list for first time
+    $('#stream-filters-container').on('scroll', function () {
+        has_scrolled = true;
+        // remove listener once user has scrolled
+        $(this).off('scroll');
+    });
+
+    exports.stream_cursor = list_cursor({
+        list: {
+            scroll_container_sel: '#stream-filters-container',
+            find_li: function (opts) {
+                var stream_id = opts.key;
+                var li = exports.get_stream_li(stream_id);
+                return li;
+            },
+            first_key: stream_sort.first_stream_id,
+            prev_key: stream_sort.prev_stream_id,
+            next_key: stream_sort.next_stream_id,
+        },
+        highlight_class: 'highlighted_stream',
+    });
+
+    var $search_input = $('.stream-list-filter').expectOne();
+
+    keydown_util.handle({
+        elem: $search_input,
+        handlers: {
+            enter_key: function () {
+                keydown_enter_key();
+                return true;
+            },
+            up_arrow: function () {
+                exports.stream_cursor.prev();
+                return true;
+            },
+            down_arrow: function () {
+                exports.stream_cursor.next();
+                return true;
+            },
+        },
+    });
+
+    $search_input.on('click', focus_stream_filter);
+    $search_input.on('focusout', exports.stream_cursor.clear);
+    $search_input.on('input', update_streams_for_search);
 };
-
-function actually_update_streams_for_search() {
-    exports.update_streams_sidebar();
-    resize.resize_page_components();
-}
-
-var update_streams_for_search = _.throttle(actually_update_streams_for_search, 50);
 
 exports.searching = function () {
     return $('.stream-list-filter').expectOne().is(':focus');
@@ -528,9 +606,7 @@ exports.initiate_search = function () {
     }
     filter.focus();
 
-    // Highlight first result
-    var all_streams = $('#stream_filters li.narrow-filter');
-    exports.highlight_first(all_streams, 'highlighted_stream');
+    exports.stream_cursor.reset();
 };
 
 exports.clear_and_hide_search = function () {
@@ -539,148 +615,12 @@ exports.clear_and_hide_search = function () {
         filter.val('');
         update_streams_for_search();
     }
+    exports.stream_cursor.clear();
     filter.blur();
     filter.parent().addClass('notdisplayed');
 };
 
-function focus_stream_filter(e) {
-    if ($('#stream_filters li.narrow-filter.highlighted_stream').length === 0) {
-        // Highlight
-        var all_streams = $('#stream_filters li.narrow-filter');
-        exports.highlight_first(all_streams, 'highlighted_stream');
-    }
-    e.stopPropagation();
-}
-
-function focusout_stream_filter() {
-    // Undo highlighting
-    $('#stream_filters li.narrow-filter.highlighted_stream').removeClass('highlighted_stream');
-}
-
-function keydown_enter_key() {
-    // Is there at least one stream?
-    if ($('#stream_filters li.narrow-filter').length > 0) {
-        var selected_stream_id = $('#stream_filters li.narrow-filter.highlighted_stream')
-                                    .expectOne().data('stream-id');
-
-        var top_stream = stream_data.get_sub_by_id(selected_stream_id);
-
-        if (overlays.is_active()) {
-            ui_util.change_tab_to('#home');
-        }
-        exports.clear_and_hide_search();
-        narrow.by('stream', top_stream.name,
-                  {select_first_unread: true, trigger: 'sidebar enter key'});
-    }
-}
-
-function next_sibing_in_dir(elm, dir_up) {
-    if (dir_up) {
-        return elm.prev();
-    }
-    return elm.next();
-}
-
-function keydown_arrow_key(dir_up, all_streams_selector,
-                           scroll_container, highlighting_class) {
-    // Are there streams to cyle through?
-    if ($(all_streams_selector).length > 0) {
-        var current_sel = $(all_streams_selector + '.' + highlighting_class).expectOne();
-        var next_sibling = next_sibing_in_dir(current_sel, dir_up);
-
-        if (highlighting_class === 'highlighted_stream'
-            && next_sibling.is('hr.stream-split')) {
-            // Only for the left sidebar
-            // Skip separator
-            next_sibling = next_sibing_in_dir(next_sibling, dir_up);
-        }
-
-        if (!next_sibling.is('li.narrow-filter')) {
-            // At the every bottom or top
-            var all_streams = $(all_streams_selector);
-            if (dir_up) {
-                // top -> start at the bottom
-                next_sibling = all_streams.last();
-            } else {
-                // bottom -> start at the top
-                next_sibling = all_streams.first();
-            }
-        }
-
-        // Classes must be explicitly named
-        if (highlighting_class === 'highlighted_stream') {
-            current_sel.removeClass('highlighted_stream');
-            next_sibling.addClass('highlighted_stream');
-        } else if (highlighting_class === 'highlighted_user') {
-            current_sel.removeClass('highlighted_user');
-            next_sibling.addClass('highlighted_user');
-        }
-
-        exports.scroll_element_into_container(next_sibling, scroll_container);
-    }
-}
-
-exports.keydown_filter = function (e, all_streams_selector, scroll_container,
-                                   highlighting_class, enter_press_function) {
-    // Function for left and right sidebar
-    // Could be placed somewhere else but ui.js is already very full
-
-    // Catch <enter> and <up-arrow>, <down-arrow> key presses
-    var handled = false;
-
-    switch (e.keyCode) {
-        case 13: {
-            // Enter key was pressed
-            enter_press_function();
-            handled = true;
-            break;
-        }
-        case 38: {
-            // Up-arrow key was pressed
-            keydown_arrow_key(true, all_streams_selector,
-                              scroll_container, highlighting_class);
-            handled = true;
-            break;
-        }
-        case 40: {
-            // Down-arrow key was pressed
-            keydown_arrow_key(false, all_streams_selector,
-                              scroll_container, highlighting_class);
-            handled = true;
-            break;
-        }
-    }
-
-    if (handled) {
-        // Since we already handled the key event above, suppress the browser handling it.
-        // We don't want the cursor to move when <arrow-up/down> is pressed.
-        // In the <enter> case:
-        // Prevent a newline from being entered into the soon-to-be-opened composebox
-        e.preventDefault();
-        e.stopPropagation();
-    }
-};
-
-function keydown_stream_filter(e) {
-    exports.keydown_filter(e, '#stream_filters li.narrow-filter',
-     $('#stream-filters-container'), 'highlighted_stream', keydown_enter_key);
-}
-
-exports.highlight_first = function (all_streams, highlighting_class) {
-    if (all_streams.length > 0) {
-        // Classes must be explicitly named
-        if (highlighting_class === 'highlighted_stream') {
-            all_streams.first().addClass('highlighted_stream');
-        } else if (highlighting_class === 'highlighted_user') {
-            all_streams.first().addClass('highlighted_user');
-        }
-    }
-};
-
 exports.toggle_filter_displayed = function (e) {
-    if (e.target.id === 'streams_inline_cog') {
-        return;
-    }
     if ($('#stream-filters-container .input-append.notdisplayed').length === 0) {
         exports.clear_and_hide_search();
     } else {
@@ -688,21 +628,6 @@ exports.toggle_filter_displayed = function (e) {
     }
     e.preventDefault();
 };
-
-$(function () {
-    $(".stream-list-filter").expectOne()
-        .on('click', focus_stream_filter)
-        .on('focusout', focusout_stream_filter)
-        .on('input', update_streams_for_search)
-        .on('keydown', keydown_stream_filter);
-    $('#clear_search_stream_button').on('click', exports.clear_search);
-});
-
-$(function () {
-    $("#streams_header").expectOne().click(function (e) {
-        exports.toggle_filter_displayed(e);
-    });
-});
 
 exports.scroll_stream_into_view = function (stream_li) {
     var container = $('#stream-filters-container');
@@ -712,64 +637,38 @@ exports.scroll_stream_into_view = function (stream_li) {
         return;
     }
 
-    exports.scroll_element_into_container(stream_li, container);
+    scroll_util.scroll_element_into_container(stream_li, container);
 };
 
-exports.scroll_delta = function (opts) {
-    var elem_top = opts.elem_top;
-    var container_height = opts.container_height;
-    var elem_bottom = opts.elem_bottom;
-
-    var delta = 0;
-
-    if (elem_top < 0) {
-        delta = Math.max(
-            elem_top,
-            elem_bottom - container_height
-        );
-        delta = Math.min(0, delta);
-    } else {
-        if (elem_bottom > container_height) {
-            delta = Math.min(
-                elem_top,
-                elem_bottom - container_height
-            );
-            delta = Math.max(0, delta);
-        }
-    }
-
-    return delta;
-};
-
-exports.scroll_element_into_container = function (elem, container) {
-    // This is a generic function to make elem visible in
-    // container by scrolling container appropriately.  We may want to
-    // eventually move this into another module, but I couldn't find
-    // an ideal landing space for this.  I considered a few modules, but
-    // some are already kind of bloated (ui.js), some may be deprecated
-    // (scroll_bar.js), and some just aren't exact fits (resize.js).
-    //
-    // This does the minimum amount of scrolling that is needed to make
-    // the element visible.  It doesn't try to center the element, so
-    // this will be non-intrusive to users when they already have
-    // the element visible.
-
-    var elem_top = elem.position().top;
-    var elem_bottom = elem_top + elem.height();
-
-    var opts = {
-        elem_top: elem_top,
-        elem_bottom: elem_bottom,
-        container_height: container.height(),
-    };
-
-    var delta = exports.scroll_delta(opts);
-
-    if (delta === 0) {
+exports.maybe_scroll_narrow_into_view = function () {
+    // we don't want to interfere with user scrolling once the page loads
+    if (has_scrolled) {
         return;
     }
 
-    container.scrollTop(container.scrollTop() + delta);
+    var stream_li = stream_list.get_current_stream_li();
+    if (stream_li) {
+        stream_list.scroll_stream_into_view(stream_li);
+    }
+};
+
+exports.get_current_stream_li = function () {
+    var stream_id = topic_list.active_stream_id();
+
+    if (!stream_id) {
+        // stream_id is undefined in non-stream narrows
+        return;
+    }
+
+    var stream_li = stream_list.get_stream_li(stream_id);
+
+    if (!stream_li) {
+        // This code path shouldn't ever be reached.
+        blueslip.warn('No active stream_li found for defined id ' + stream_id);
+        return;
+    }
+
+    return stream_li;
 };
 
 return exports;
@@ -777,3 +676,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = stream_list;
 }
+window.stream_list = stream_list;

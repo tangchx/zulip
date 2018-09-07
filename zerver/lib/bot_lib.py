@@ -8,7 +8,7 @@ import re
 import importlib
 from zerver.lib.actions import internal_send_private_message, \
     internal_send_stream_message, internal_send_huddle_message
-from zerver.models import UserProfile, get_user
+from zerver.models import UserProfile, get_active_user
 from zerver.lib.bot_storage import get_bot_storage, set_bot_storage, \
     is_key_in_bot_storage, get_bot_storage_size, remove_bot_storage
 from zerver.lib.bot_config import get_bot_config, ConfigError
@@ -18,7 +18,7 @@ import configparser
 
 if False:
     from mypy_extensions import NoReturn
-from typing import Any, Optional, List, Dict, Text
+from typing import Any, Optional, List, Dict
 from types import ModuleType
 
 our_dir = os.path.dirname(os.path.abspath(__file__))
@@ -45,16 +45,16 @@ class StateHandler:
         self.marshal = lambda obj: json.dumps(obj)
         self.demarshal = lambda obj: json.loads(obj)
 
-    def get(self, key: Text) -> Text:
+    def get(self, key: str) -> str:
         return self.demarshal(get_bot_storage(self.user_profile, key))
 
-    def put(self, key: Text, value: Text) -> None:
+    def put(self, key: str, value: str) -> None:
         set_bot_storage(self.user_profile, [(key, self.marshal(value))])
 
-    def remove(self, key: Text) -> None:
+    def remove(self, key: str) -> None:
         remove_bot_storage(self.user_profile, [key])
 
-    def contains(self, key: Text) -> bool:
+    def contains(self, key: str) -> bool:
         return is_key_in_bot_storage(self.user_profile, key)
 
 class EmbeddedBotQuitException(Exception):
@@ -84,7 +84,7 @@ class EmbeddedBotHandler:
         recipients = ','.join(message['to']).split(',')
 
         if len(message['to']) == 1:
-            recipient_user = get_user(recipients[0], self.user_profile.realm)
+            recipient_user = get_active_user(recipients[0], self.user_profile.realm)
             internal_send_private_message(self.user_profile.realm, self.user_profile,
                                           recipient_user, message['content'])
         else:
@@ -109,7 +109,7 @@ class EmbeddedBotHandler:
             ))
 
     # The bot_name argument exists only to comply with ExternalBotHandler.get_config_info().
-    def get_config_info(self, bot_name: str, optional: bool=False) -> Dict[Text, Text]:
+    def get_config_info(self, bot_name: str, optional: bool=False) -> Dict[str, str]:
         try:
             return get_bot_config(self.user_profile)
         except ConfigError:

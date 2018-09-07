@@ -6,12 +6,8 @@
     hence the name.
 #}
 
-{% block customhead %}
-{% stylesheet 'portico' %}
-{{ render_bundle('translations') }}
-{% endblock %}
-
 {% block porticocustomhead %}
+{{ render_bundle('translations') }}
 {{ render_bundle('portico') }}
 {% endblock %}
 

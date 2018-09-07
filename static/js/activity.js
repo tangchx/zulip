@@ -10,16 +10,9 @@ var DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 /* Time between keep-alive pings */
 var ACTIVE_PING_INTERVAL_MS = 50 * 1000;
 
-var presence_descriptions = {
-    active: 'is active',
-    idle:   'is not active',
-};
-
 /* Keep in sync with views.py:update_active_status_backend() */
 exports.ACTIVE = "active";
 exports.IDLE = "idle";
-
-var meta = {};
 
 // When you start Zulip, has_focus should be true, but it might not be the
 // case after a server-initiated reload.
@@ -34,15 +27,15 @@ exports.new_user_input = true;
 var huddle_timestamps = new Dict();
 
 exports.update_scrollbar = (function () {
-    var $user_presences = $("#user_presences");
+    var $buddy_list_wrapper = $("#buddy_list_wrapper");
     var $group_pms = $("#group-pms");
 
     return {
         users: function () {
-            if (!$user_presences.length) {
-                $user_presences = $("#user_presences");
+            if (!$buddy_list_wrapper.length) {
+                $buddy_list_wrapper = $("#buddy_list_wrapper");
             }
-            ui.update_scrollbar($user_presences);
+            ui.update_scrollbar($buddy_list_wrapper);
         },
         group_pms: function () {
             if (!$group_pms.length) {
@@ -84,7 +77,9 @@ function update_group_count_in_dom(count_span, value_span, count) {
 }
 
 function get_pm_list_item(user_id) {
-    return $("li.user_sidebar_entry[data-user-id='" + user_id + "']");
+    return buddy_list.find_li({
+        key: user_id,
+    });
 }
 
 function get_group_list_item(user_ids_string) {
@@ -127,7 +122,7 @@ exports.process_loaded_messages = function (messages) {
         if (huddle_string) {
             var old_timestamp = huddle_timestamps.get(huddle_string);
 
-            if (!old_timestamp || (old_timestamp < message.timestamp)) {
+            if (!old_timestamp || old_timestamp < message.timestamp) {
                 huddle_timestamps.set(huddle_string, message.timestamp);
                 need_resize = true;
             }
@@ -187,54 +182,18 @@ exports.huddle_fraction_present = function (huddle) {
 
     var num_present = 0;
     _.each(user_ids, function (user_id) {
-        if (presence.is_not_offline(user_id)) {
+        if (presence.is_active(user_id)) {
             num_present += 1;
         }
     });
 
-    var ratio = num_present / user_ids.length;
-
-    return ratio.toFixed(2);
+    if (num_present === user_ids.length) {
+        return 1;
+    } else if (num_present !== 0) {
+        return 0.5;
+    }
+    return false;
 };
-
-function compare_function(a, b) {
-
-    function level(status) {
-        switch (status) {
-            case 'active':
-                return 1;
-            case 'idle':
-                return 2;
-            default:
-                return 3;
-        }
-    }
-
-    var level_a = level(presence.get_status(a));
-    var level_b = level(presence.get_status(b));
-    var diff = level_a - level_b;
-    if (diff !== 0) {
-        return diff;
-    }
-
-    // Sort equivalent PM names alphabetically
-    var person_a = people.get_person_from_user_id(a);
-    var person_b = people.get_person_from_user_id(b);
-
-    var full_name_a = person_a ? person_a.full_name : '';
-    var full_name_b = person_b ? person_b.full_name : '';
-
-    return util.strcmp(full_name_a, full_name_b);
-}
-
-function sort_users(user_ids) {
-    // TODO sort by unread count first, once we support that
-    user_ids.sort(compare_function);
-    return user_ids;
-}
-
-// for testing:
-exports._sort_users = sort_users;
 
 function focus_lost() {
     // When we become idle, we don't immediately send anything to the
@@ -243,93 +202,29 @@ function focus_lost() {
     exports.has_focus = false;
 }
 
-function filter_user_ids(user_ids) {
-    var filter_text = exports.get_filter_text();
-
-    if (filter_text === '') {
-        return user_ids;
-    }
-
-    var search_terms = filter_text.toLowerCase().split(",");
-    search_terms = _.map(search_terms, function (s) {
-        return s.trim();
-    });
-
-    var persons = _.map(user_ids, function (user_id) {
-        return people.get_person_from_user_id(user_id);
-    });
-
-    var user_id_dict = people.filter_people_by_search_terms(persons, search_terms);
-    return user_id_dict.keys();
-}
-
-function matches_filter(user_id) {
-    // This is a roundabout way of checking a user if you look
-    // too hard at it, but it should be fine for now.
-    return (filter_user_ids([user_id]).length === 1);
-}
-
-function get_num_unread(user_id) {
-    if (unread.suppress_unread_counts) {
-        return 0;
-    }
-    return unread.num_unread_for_person(user_id);
-}
-
-function info_for(user_id) {
-    var status = presence.get_status(user_id);
-    var person = people.get_person_from_user_id(user_id);
-
-    // if the user is you or a bot, do not show in presence data.
-    if (person.is_bot || person.user_id === page_params.user_id) {
-        return;
-    }
-
-    return {
-        href: narrow.pm_with_uri(person.email),
-        name: person.full_name,
-        user_id: user_id,
-        num_unread: get_num_unread(user_id),
-        type: status,
-        type_desc: presence_descriptions[status],
-    };
-}
-
 exports.insert_user_into_list = function (user_id) {
     if (page_params.realm_presence_disabled) {
         return;
     }
 
-    if (!matches_filter(user_id)) {
+    var filter_text = exports.get_filter_text();
+
+    if (!buddy_data.matches_filter(filter_text, user_id)) {
         return;
     }
 
-    var info = info_for(user_id);
-    $('#user_presences').find('[data-user-id="' + user_id + '"]').remove();
-    var html = templates.render('user_presence_row', info);
+    var info = buddy_data.get_item(user_id);
 
-    var items = $('#user_presences li').toArray();
+    buddy_list.insert_or_move({
+        key: user_id,
+        item: info,
+    });
 
-    function insert() {
-        var i = 0;
-
-        for (i = 0; i < items.length; i += 1) {
-            var li = $(items[i]);
-            var list_user_id = li.attr('data-user-id');
-            if (compare_function(user_id, list_user_id) < 0) {
-                li.before(html);
-                return;
-            }
-        }
-
-        $('#user_presences').append(html);
-    }
-
-    insert();
     exports.update_scrollbar.users();
+};
 
-    var elt = get_pm_list_item(user_id);
-    compose_fade.update_one_user_row(elt);
+exports.searching = function () {
+    return exports.user_filter && exports.user_filter.searching();
 };
 
 exports.build_user_sidebar = function () {
@@ -337,31 +232,25 @@ exports.build_user_sidebar = function () {
         return;
     }
 
-    var user_ids = exports.get_filtered_and_sorted_user_ids();
+    var filter_text = exports.get_filter_text();
 
-    var user_info = _.map(user_ids, info_for).filter(function (person) {
-        // filtered bots and yourself are set to "undefined" in the `info_for`
-        // function.
-        return typeof person !== "undefined";
+    var user_ids = buddy_data.get_filtered_and_sorted_user_ids(filter_text);
+
+    buddy_list.populate({
+        keys: user_ids,
     });
-    var html = templates.render('user_presence_rows', {users: user_info});
-    $('#user_presences').html(html);
-
-    // Update user fading, if necessary.
-    compose_fade.update_faded_users();
 
     resize.resize_page_components();
 
-    // Highlight top user when searching
-    $('#user_presences li.user_sidebar_entry.highlighted_user').removeClass('highlighted_user');
-    if (exports.searching()) {
-        var all_streams = $('#user_presences li.user_sidebar_entry.narrow-filter');
-        stream_list.highlight_first(all_streams, 'highlighted_user');
-    }
-    return user_info; // for testing
+    return user_ids; // for testing
 };
 
-var update_users_for_search = _.throttle(exports.build_user_sidebar, 50);
+function do_update_users_for_search() {
+    exports.build_user_sidebar();
+    exports.user_cursor.reset();
+}
+
+var update_users_for_search = _.throttle(do_update_users_for_search, 50);
 
 function show_huddles() {
     $('#group-pm-list').addClass("show");
@@ -387,7 +276,7 @@ exports.update_huddles = function () {
         return {
             user_ids_string: huddle,
             name: exports.full_huddle_name(huddle),
-            href: narrow.huddle_with_uri(huddle),
+            href: hash_util.huddle_with_uri(huddle),
             fraction_present: exports.huddle_fraction_present(huddle),
             short_name: exports.short_huddle_name(huddle),
         };
@@ -406,13 +295,13 @@ exports.update_huddles = function () {
 };
 
 function focus_ping(want_redraw) {
-    if (reload.is_in_progress()) {
+    if (reload_state.is_in_progress()) {
         blueslip.log("Skipping querying presence because reload in progress");
         return;
     }
     channel.post({
         url: '/json/users/me/presence',
-        data: {status: (exports.has_focus) ? exports.ACTIVE : exports.IDLE,
+        data: {status: exports.has_focus ? exports.ACTIVE : exports.IDLE,
                ping_only: !want_redraw,
                new_user_input: exports.new_user_input},
         idempotent: true,
@@ -442,8 +331,7 @@ function focus_ping(want_redraw) {
 
             if (want_redraw) {
                 presence.set_info(data.presences, data.server_timestamp);
-                exports.build_user_sidebar();
-                exports.update_huddles();
+                exports.redraw();
             }
         },
     });
@@ -463,23 +351,20 @@ exports.initialize = function () {
 
     $(window).focus(focus_gained);
     $(window).idle({idle: DEFAULT_IDLE_TIMEOUT_MS,
-                onIdle: focus_lost,
-                onActive: focus_gained,
-                keepTracking: true});
+                    onIdle: focus_lost,
+                    onActive: focus_gained,
+                    keepTracking: true});
 
     presence.set_info(page_params.presences,
                       page_params.initial_servertime);
     delete page_params.presences;
 
-    exports.set_user_list_filter();
+    exports.set_cursor_and_filter();
 
     exports.build_user_sidebar();
     exports.update_huddles();
 
-    exports.set_user_list_filter_handlers();
-
-    $('#clear_search_people_button').on('click', exports.clear_search);
-    $('#userlist-header').click(exports.toggle_filter_displayed);
+    buddy_list.start_scroll_handler();
 
     // Let the server know we're here, but pass "false" for
     // want_redraw, since we just got all this info in page_params.
@@ -491,7 +376,7 @@ exports.initialize = function () {
 
     setInterval(get_full_presence_list_update, ACTIVE_PING_INTERVAL_MS);
 
-    ui.set_up_scrollbar($("#user_presences"));
+    ui.set_up_scrollbar($("#buddy_list_wrapper"));
     ui.set_up_scrollbar($("#group-pms"));
 };
 
@@ -513,141 +398,88 @@ exports.set_user_status = function (email, info, server_time) {
 
 exports.redraw = function () {
     exports.build_user_sidebar();
+    exports.user_cursor.redraw();
     exports.update_huddles();
 };
 
-exports.searching = function () {
-    return $('.user-list-filter').expectOne().is(':focus');
+exports.reset_users = function () {
+    // Call this when we're leaving the search widget.
+    exports.build_user_sidebar();
+    exports.user_cursor.clear();
 };
 
-exports.clear_search = function () {
-    var filter = $('.user-list-filter').expectOne();
-    if (filter.val() === '') {
-        exports.clear_and_hide_search();
-        return;
-    }
-    filter.val('');
-    filter.blur();
-    update_users_for_search();
+exports.narrow_for_user = function (opts) {
+    var user_id = buddy_list.get_key_from_li({li: opts.li});
+    return exports.narrow_for_user_id({user_id: user_id});
 };
 
-exports.escape_search = function () {
-    var filter = $('.user-list-filter').expectOne();
-    if (filter.val() === '') {
-        exports.clear_and_hide_search();
-        return;
-    }
-    filter.val('');
-    update_users_for_search();
-};
+exports.narrow_for_user_id = function (opts) {
+    var person = people.get_person_from_user_id(opts.user_id);
+    var email = person.email;
 
-exports.clear_and_hide_search = function () {
-    var filter = $('.user-list-filter').expectOne();
-    if (filter.val() !== '') {
-        filter.val('');
-        update_users_for_search();
-    }
-    filter.blur();
-    $('#user-list .input-append').addClass('notdisplayed');
-    // Undo highlighting
-    $('#user_presences li.user_sidebar_entry.highlighted_user').removeClass('highlighted_user');
-};
-
-function highlight_first_user() {
-    if ($('#user_presences li.user_sidebar_entry.narrow-filter.highlighted_user').length === 0) {
-        // Highlight
-        var all_streams = $('#user_presences li.user_sidebar_entry.narrow-filter');
-        stream_list.highlight_first(all_streams, 'highlighted_user');
-    }
-}
-
-exports.initiate_search = function () {
-    var filter = $('.user-list-filter').expectOne();
-    var column = $('.user-list-filter').closest(".app-main [class^='column-']");
-    $('#user-list .input-append').removeClass('notdisplayed');
-    if (!column.hasClass("expanded")) {
-        popovers.hide_all();
-        if (column.hasClass('column-left')) {
-            stream_popover.show_streamlist_sidebar();
-        } else if (column.hasClass('column-right')) {
-            popovers.show_userlist_sidebar();
-        }
-    }
-    filter.focus();
-    highlight_first_user();
-};
-
-exports.toggle_filter_displayed = function () {
-    if ($('#user-list .input-append').hasClass('notdisplayed')) {
-        exports.initiate_search();
-    } else {
-        exports.clear_and_hide_search();
-    }
+    narrow.by('pm-with', email, {trigger: 'sidebar'});
+    exports.user_filter.clear_and_hide_search();
 };
 
 function keydown_enter_key() {
-    // Is there at least one user?
-    if ($('#user_presences li.user_sidebar_entry.narrow-filter').length > 0) {
-        // There must be a 'highlighted_user' user
-        var select_user = $('#user_presences li.user_sidebar_entry.narrow-filter.highlighted_user')
-                            .expectOne().attr('data-user-id');
-
-        var email = people.get_person_from_user_id(select_user).email;
-        narrow.by('pm-with', email, {select_first_unread: true, trigger: 'user sidebar'});
-        compose_actions.start('private', {  trigger: 'sidebar enter key',
-                                            private_message_recipient: email});
-
-        // Clear the user filter
-        exports.clear_and_hide_search();
-    }
-}
-
-function keydown_user_filter(e) {
-    stream_list.keydown_filter(e, '#user_presences li.user_sidebar_entry.narrow-filter',
-                               $('#user_presences'), 'highlighted_user', keydown_enter_key);
-}
-
-function focus_user_filter(e) {
-    highlight_first_user();
-    e.stopPropagation();
-}
-
-function focusout_user_filter() {
-    // Undo highlighting
-    $('#user_presences li.user_sidebar_entry.highlighted_user').removeClass('highlighted_user');
-}
-
-exports.get_filtered_and_sorted_user_ids = function () {
-    var user_ids;
-
-    if (exports.get_filter_text()) {
-        // If there's a filter, select from all users, not just those
-        // recently active.
-        user_ids = filter_user_ids(people.get_active_user_ids());
-    } else {
-        // From large realms, the user_ids in presence may exclude
-        // users who have been idle more than three weeks.  When the
-        // filter text is blank, we show only those recently active users.
-        user_ids = presence.get_user_ids();
+    var user_id = exports.user_cursor.get_key();
+    if (user_id === undefined) {
+        return;
     }
 
-    return sort_users(user_ids);
+    exports.narrow_for_user_id({user_id: user_id});
+    popovers.hide_all();
+}
+
+exports.set_cursor_and_filter = function () {
+    exports.user_cursor = list_cursor({
+        list: buddy_list,
+        highlight_class: 'highlighted_user',
+    });
+
+    exports.user_filter = user_search({
+        update_list: update_users_for_search,
+        reset_items: exports.reset_users,
+        on_focus: exports.user_cursor.reset,
+    });
+
+    var $input = exports.user_filter.input_field();
+
+    $input.on('blur', exports.user_cursor.clear);
+
+    keydown_util.handle({
+        elem: $input,
+        handlers: {
+            enter_key: function () {
+                keydown_enter_key();
+                return true;
+            },
+            up_arrow: function () {
+                exports.user_cursor.prev();
+                return true;
+            },
+            down_arrow: function () {
+                exports.user_cursor.next();
+                return true;
+            },
+        },
+    });
 };
 
-exports.set_user_list_filter = function () {
-    meta.$user_list_filter = $(".user-list-filter");
+exports.initiate_search = function () {
+    if (exports.user_filter) {
+        exports.user_filter.initiate_search();
+    }
 };
 
-exports.set_user_list_filter_handlers = function () {
-    meta.$user_list_filter.expectOne()
-        .on('click', focus_user_filter)
-        .on('input', update_users_for_search)
-        .on('keydown', keydown_user_filter)
-        .on('blur', focusout_user_filter);
+exports.escape_search = function () {
+    if (exports.user_filter) {
+        exports.user_filter.escape_search();
+    }
 };
 
 exports.get_filter_text = function () {
-    if (!meta.$user_list_filter) {
+    if (!exports.user_filter) {
         // This may be overly defensive, but there may be
         // situations where get called before everything is
         // fully initialized.  The empty string is a fine
@@ -656,9 +488,7 @@ exports.get_filter_text = function () {
         return '';
     }
 
-    var user_filter = meta.$user_list_filter.expectOne().val().trim();
-
-    return user_filter;
+    return exports.user_filter.text();
 };
 
 return exports;
@@ -667,3 +497,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = activity;
 }
+window.activity = activity;

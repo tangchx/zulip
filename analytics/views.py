@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, \
-    Optional, Set, Text, Tuple, Type, Union
+    Optional, Set, Tuple, Type, Union
 
 import pytz
 from django.conf import settings
@@ -25,10 +25,11 @@ from jinja2 import Markup as mark_safe
 from analytics.lib.counts import COUNT_STATS, CountStat, process_count_stat
 from analytics.lib.time_utils import time_range
 from analytics.models import BaseCount, InstallationCount, \
-    RealmCount, StreamCount, UserCount, last_successful_fill
-from zerver.decorator import require_server_admin, \
+    RealmCount, StreamCount, UserCount, last_successful_fill, installation_epoch
+from zerver.decorator import require_server_admin, require_server_admin_api, \
     to_non_negative_int, to_utc_datetime, zulip_login_required
 from zerver.lib.exceptions import JsonableError
+from zerver.lib.json_encoder_for_html import JSONEncoderForHTML
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_success
 from zerver.lib.timestamp import ceiling_to_day, \
@@ -36,43 +37,95 @@ from zerver.lib.timestamp import ceiling_to_day, \
 from zerver.models import Client, get_realm, Realm, \
     UserActivity, UserActivityInterval, UserProfile
 
-@zulip_login_required
-def stats(request: HttpRequest) -> HttpResponse:
+def render_stats(request: HttpRequest, data_url_suffix: str, target_name: str,
+                 for_installation: bool=False) -> HttpRequest:
+    page_params = dict(
+        data_url_suffix=data_url_suffix,
+        for_installation=for_installation,
+        debug_mode=False,
+    )
     return render(request,
                   'analytics/stats.html',
-                  context=dict(realm_name = request.user.realm.name))
+                  context=dict(target_name=target_name,
+                               page_params=JSONEncoderForHTML().encode(page_params)))
+
+@zulip_login_required
+def stats(request: HttpRequest) -> HttpResponse:
+    realm = request.user.realm
+    return render_stats(request, '', realm.name or realm.string_id)
+
+@require_server_admin
+@has_request_variables
+def stats_for_realm(request: HttpRequest, realm_str: str) -> HttpResponse:
+    realm = get_realm(realm_str)
+    if realm is None:
+        return HttpResponseNotFound("Realm %s does not exist" % (realm_str,))
+
+    return render_stats(request, '/realm/%s' % (realm_str,), realm.name or realm.string_id)
+
+@require_server_admin_api
+@has_request_variables
+def get_chart_data_for_realm(request: HttpRequest, user_profile: UserProfile,
+                             realm_str: str, **kwargs: Any) -> HttpResponse:
+    realm = get_realm(realm_str)
+    if realm is None:
+        raise JsonableError(_("Invalid organization"))
+
+    return get_chart_data(request=request, user_profile=user_profile, realm=realm, **kwargs)
+
+@require_server_admin
+def stats_for_installation(request: HttpRequest) -> HttpResponse:
+    return render_stats(request, '/installation', 'Installation', True)
+
+@require_server_admin_api
+@has_request_variables
+def get_chart_data_for_installation(request: HttpRequest, user_profile: UserProfile,
+                                    chart_name: str=REQ(), **kwargs: Any) -> HttpResponse:
+    return get_chart_data(request=request, user_profile=user_profile, for_installation=True, **kwargs)
 
 @has_request_variables
-def get_chart_data(request: HttpRequest, user_profile: UserProfile, chart_name: Text=REQ(),
+def get_chart_data(request: HttpRequest, user_profile: UserProfile, chart_name: str=REQ(),
                    min_length: Optional[int]=REQ(converter=to_non_negative_int, default=None),
                    start: Optional[datetime]=REQ(converter=to_utc_datetime, default=None),
-                   end: Optional[datetime]=REQ(converter=to_utc_datetime, default=None)) -> HttpResponse:
+                   end: Optional[datetime]=REQ(converter=to_utc_datetime, default=None),
+                   realm: Optional[Realm]=None, for_installation: bool=False) -> HttpResponse:
+    aggregate_table = RealmCount
+    if for_installation:
+        aggregate_table = InstallationCount
+
     if chart_name == 'number_of_humans':
-        stat = COUNT_STATS['realm_active_humans::day']
-        tables = [RealmCount]
-        subgroup_to_label = {None: 'human'}  # type: Dict[Optional[str], str]
+        stats = [
+            COUNT_STATS['1day_actives::day'],
+            COUNT_STATS['realm_active_humans::day'],
+            COUNT_STATS['active_users_audit:is_bot:day']]
+        tables = [aggregate_table]
+        subgroup_to_label = {
+            stats[0]: {None: '_1day'},
+            stats[1]: {None: '_15day'},
+            stats[2]: {'false': 'all_time'}}  # type: Dict[CountStat, Dict[Optional[str], str]]
         labels_sort_function = None
         include_empty_subgroups = True
     elif chart_name == 'messages_sent_over_time':
-        stat = COUNT_STATS['messages_sent:is_bot:hour']
-        tables = [RealmCount, UserCount]
-        subgroup_to_label = {'false': 'human', 'true': 'bot'}
+        stats = [COUNT_STATS['messages_sent:is_bot:hour']]
+        tables = [aggregate_table, UserCount]
+        subgroup_to_label = {stats[0]: {'false': 'human', 'true': 'bot'}}
         labels_sort_function = None
         include_empty_subgroups = True
     elif chart_name == 'messages_sent_by_message_type':
-        stat = COUNT_STATS['messages_sent:message_type:day']
-        tables = [RealmCount, UserCount]
-        subgroup_to_label = {'public_stream': 'Public streams',
-                             'private_stream': 'Private streams',
-                             'private_message': 'Private messages',
-                             'huddle_message': 'Group private messages'}
-        labels_sort_function = lambda data: sort_by_totals(data['realm'])
+        stats = [COUNT_STATS['messages_sent:message_type:day']]
+        tables = [aggregate_table, UserCount]
+        subgroup_to_label = {stats[0]: {'public_stream': _('Public streams'),
+                                        'private_stream': _('Private streams'),
+                                        'private_message': _('Private messages'),
+                                        'huddle_message': _('Group private messages')}}
+        labels_sort_function = lambda data: sort_by_totals(data['everyone'])
         include_empty_subgroups = True
     elif chart_name == 'messages_sent_by_client':
-        stat = COUNT_STATS['messages_sent:client:day']
-        tables = [RealmCount, UserCount]
+        stats = [COUNT_STATS['messages_sent:client:day']]
+        tables = [aggregate_table, UserCount]
         # Note that the labels are further re-written by client_label_map
-        subgroup_to_label = {str(id): name for id, name in Client.objects.values_list('id', 'name')}
+        subgroup_to_label = {stats[0]:
+                             {str(id): name for id, name in Client.objects.values_list('id', 'name')}}
         labels_sort_function = sort_client_labels
         include_empty_subgroups = False
     else:
@@ -88,27 +141,36 @@ def get_chart_data(request: HttpRequest, user_profile: UserProfile, chart_name: 
         raise JsonableError(_("Start time is later than end time. Start: %(start)s, End: %(end)s") %
                             {'start': start, 'end': end})
 
-    realm = user_profile.realm
+    if realm is None:
+        realm = user_profile.realm
     if start is None:
-        start = realm.date_created
+        if for_installation:
+            start = installation_epoch()
+        else:
+            start = realm.date_created
     if end is None:
-        end = last_successful_fill(stat.property)
+        end = max(last_successful_fill(stat.property) or
+                  datetime.min.replace(tzinfo=timezone_utc) for stat in stats)
     if end is None or start > end:
         logging.warning("User from realm %s attempted to access /stats, but the computed "
-                        "start time: %s (creation time of realm) is later than the computed "
+                        "start time: %s (creation of realm or installation) is later than the computed "
                         "end time: %s (last successful analytics update). Is the "
                         "analytics cron job running?" % (realm.string_id, start, end))
         raise JsonableError(_("No analytics data available. Please contact your server administrator."))
 
-    end_times = time_range(start, end, stat.frequency, min_length)
-    data = {'end_times': end_times, 'frequency': stat.frequency}
+    assert len(set([stat.frequency for stat in stats])) == 1
+    end_times = time_range(start, end, stats[0].frequency, min_length)
+    data = {'end_times': end_times, 'frequency': stats[0].frequency}  # type: Dict[str, Any]
+
+    aggregation_level = {InstallationCount: 'everyone', RealmCount: 'everyone', UserCount: 'user'}
+    # -1 is a placeholder value, since there is no relevant filtering on InstallationCount
+    id_value = {InstallationCount: -1, RealmCount: realm.id, UserCount: user_profile.id}
     for table in tables:
-        if table == RealmCount:
-            data['realm'] = get_time_series_by_subgroup(
-                stat, RealmCount, realm.id, end_times, subgroup_to_label, include_empty_subgroups)
-        if table == UserCount:
-            data['user'] = get_time_series_by_subgroup(
-                stat, UserCount, user_profile.id, end_times, subgroup_to_label, include_empty_subgroups)
+        data[aggregation_level[table]] = {}
+        for stat in stats:
+            data[aggregation_level[table]].update(get_time_series_by_subgroup(
+                stat, table, id_value[table], end_times, subgroup_to_label[stat], include_empty_subgroups))
+
     if labels_sort_function is not None:
         data['display_order'] = labels_sort_function(data)
     else:
@@ -127,7 +189,7 @@ def sort_by_totals(value_arrays: Dict[str, List[int]]) -> List[str]:
 # tries to rank the clients so that taking the first N elements of the
 # sorted list has a reasonable chance of doing so.
 def sort_client_labels(data: Dict[str, Dict[str, List[int]]]) -> List[str]:
-    realm_order = sort_by_totals(data['realm'])
+    realm_order = sort_by_totals(data['everyone'])
     user_order = sort_by_totals(data['user'])
     label_sort_values = {}  # type: Dict[str, float]
     for i, label in enumerate(realm_order):
@@ -293,6 +355,7 @@ def realm_summary_table(realm_minutes: Dict[str, float]) -> str:
         SELECT
             realm.string_id,
             realm.date_created,
+            realm.plan_type,
             coalesce(user_counts.dau_count, 0) dau_count,
             coalesce(wau_counts.wau_count, 0) wau_count,
             (
@@ -407,6 +470,8 @@ def realm_summary_table(realm_minutes: Dict[str, float]) -> str:
 
     for row in rows:
         row['date_created_day'] = row['date_created'].strftime('%Y-%m-%d')
+        row['plan_type_string'] = [
+            '', 'self hosted', 'limited', 'premium', 'premium free'][row['plan_type']]
         row['age_days'] = int((now - row['date_created']).total_seconds()
                               / 86400)
         row['is_new'] = row['age_days'] < 12 * 7
@@ -435,6 +500,7 @@ def realm_summary_table(realm_minutes: Dict[str, float]) -> str:
 
     # formatting
     for row in rows:
+        row['stats_link'] = realm_stats_link(row['string_id'])
         row['string_id'] = realm_activity_link(row['string_id'])
 
     # Count active sites
@@ -456,6 +522,8 @@ def realm_summary_table(realm_minutes: Dict[str, float]) -> str:
 
     rows.append(dict(
         string_id='Total',
+        plan_type_string="",
+        stats_link = '',
         date_created_day='',
         realm_admin_email='',
         dau_count=total_dau_count,
@@ -901,6 +969,12 @@ def realm_activity_link(realm_str: str) -> mark_safe:
     realm_link = '<a href="%s">%s</a>' % (url, realm_str)
     return mark_safe(realm_link)
 
+def realm_stats_link(realm_str: str) -> mark_safe:
+    url_name = 'analytics.views.stats_for_realm'
+    url = reverse(url_name, kwargs=dict(realm_str=realm_str))
+    stats_link = '<a href="{}"><i class="fa fa-pie-chart"></i></a>'.format(url, realm_str)
+    return mark_safe(stats_link)
+
 def realm_client_table(user_summaries: Dict[str, Dict[str, Dict[str, Any]]]) -> str:
     exclude_keys = [
         'internal',
@@ -972,7 +1046,7 @@ def user_activity_summary_table(user_summary: Dict[str, Dict[str, Any]]) -> str:
     return make_table(title, cols, rows)
 
 def realm_user_summary_table(all_records: List[QuerySet],
-                             admin_emails: Set[Text]) -> Tuple[Dict[str, Dict[str, Any]], str]:
+                             admin_emails: Set[str]) -> Tuple[Dict[str, Dict[str, Any]], str]:
     user_records = {}
 
     def by_email(record: QuerySet) -> str:

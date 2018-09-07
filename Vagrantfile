@@ -121,14 +121,18 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
   end
 
   config.vm.network "forwarded_port", guest: 9991, host: host_port, host_ip: host_ip_addr
+  config.vm.network "forwarded_port", guest: 9994, host: host_port + 3, host_ip: host_ip_addr
   # Specify LXC provider before VirtualBox provider so it's preferred.
   config.vm.provider "lxc" do |lxc|
     if command? "lxc-ls"
       LXC_VERSION = `lxc-ls --version`.strip unless defined? LXC_VERSION
-      if LXC_VERSION >= "1.1.0"
+      if LXC_VERSION >= "1.1.0" and LXC_VERSION < "3.0.0"
         # Allow start without AppArmor, otherwise Box will not Start on Ubuntu 14.10
         # see https://github.com/fgrehm/vagrant-lxc/issues/333
         lxc.customize 'aa_allow_incomplete', 1
+      end
+      if LXC_VERSION >= "3.0.0"
+        lxc.customize 'apparmor.allow_incomplete', 1
       end
       if LXC_VERSION >= "2.0.0"
         lxc.backingstore = 'dir'
@@ -164,10 +168,10 @@ sudo bash -c 'cat << EndOfMessage > /etc/motd
 Welcome to the Zulip development environment!  Popular commands:
 * tools/provision - Update the development environment
 * tools/run-dev.py - Run the development server
-* tools/lint - Run the linter (quick and catches many problmes)
+* tools/lint - Run the linter (quick and catches many problems)
 * tools/test-* - Run tests (use --help to learn about options)
 
-Read https://zulip.readthedocs.io/en/latest/testing.html to learn
+Read https://zulip.readthedocs.io/en/latest/testing/testing.html to learn
 how to run individual test suites so that you can get a fast debug cycle.
 
 EndOfMessage'

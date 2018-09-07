@@ -69,11 +69,11 @@ exports.sort_groups = function (search_term) {
     normal_streams.sort(util.strcmp);
     dormant_streams.sort(util.strcmp);
 
-    var same_as_before =  (
+    var same_as_before =
         previous_pinned !== undefined &&
         util.array_compare(previous_pinned, pinned_streams) &&
         util.array_compare(previous_normal, normal_streams) &&
-        util.array_compare(previous_dormant, dormant_streams));
+        util.array_compare(previous_dormant, dormant_streams);
 
     if (!same_as_before) {
         previous_pinned = pinned_streams;
@@ -91,8 +91,55 @@ exports.sort_groups = function (search_term) {
     };
 };
 
+function pos(stream_id) {
+    var sub = stream_data.get_sub_by_id(stream_id);
+    var name = sub.name;
+    var i = all_streams.indexOf(name);
+
+    if (i < 0) {
+        return;
+    }
+
+    return i;
+}
+
+function maybe_get_stream_id(i) {
+    if (i < 0 || i >= all_streams.length) {
+        return;
+    }
+
+    var name = all_streams[i];
+    var stream_id = stream_data.get_stream_id(name);
+    return stream_id;
+}
+
+exports.first_stream_id = function () {
+    return maybe_get_stream_id(0);
+};
+
+exports.prev_stream_id = function (stream_id) {
+    var i = pos(stream_id);
+
+    if (i === undefined) {
+        return;
+    }
+
+    return maybe_get_stream_id(i - 1);
+};
+
+exports.next_stream_id = function (stream_id) {
+    var i = pos(stream_id);
+
+    if (i === undefined) {
+        return;
+    }
+
+    return maybe_get_stream_id(i + 1);
+};
+
 return exports;
 }());
 if (typeof module !== 'undefined') {
     module.exports = stream_sort;
 }
+window.stream_sort = stream_sort;

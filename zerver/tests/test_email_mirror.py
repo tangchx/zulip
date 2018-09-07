@@ -22,6 +22,8 @@ from zerver.models import (
 
 from zerver.lib.actions import (
     encode_email_address,
+    ensure_stream,
+    decode_email_address,
 )
 from zerver.lib.email_mirror import (
     process_message, process_stream_message, ZulipEmailForwardError,
@@ -45,12 +47,45 @@ import sys
 from io import StringIO
 from django.conf import settings
 
-from typing import Any, Callable, Dict, Mapping, Union, Text, Optional
+from typing import Any, Callable, Dict, Mapping, Union, Optional
+
+class TestEncodeDecode(ZulipTestCase):
+    def test_encode_decode(self) -> None:
+        realm = get_realm('zulip')
+        stream_name = 'dev. help'
+        stream = ensure_stream(realm, stream_name)
+        email_address = encode_email_address(stream)
+        self.assertTrue(email_address.startswith('dev%0046%0032help'))
+        self.assertTrue(email_address.endswith('@testserver'))
+        tup = decode_email_address(email_address)
+        assert tup is not None
+        (decoded_stream_name, token) = tup
+        self.assertEqual(decoded_stream_name, stream_name)
+        self.assertEqual(token, stream.email_token)
+
+        email_address = email_address.replace('+', '.')
+        tup = decode_email_address(email_address)
+        assert tup is not None
+        (decoded_stream_name, token) = tup
+        self.assertEqual(decoded_stream_name, stream_name)
+        self.assertEqual(token, stream.email_token)
+
+        email_address = email_address.replace('@testserver', '@zulip.org')
+        self.assertEqual(decode_email_address(email_address), None)
+
+        with self.settings(EMAIL_GATEWAY_EXTRA_PATTERN_HACK='@zulip.org'):
+            tup = decode_email_address(email_address)
+            assert tup is not None
+            (decoded_stream_name, token) = tup
+            self.assertEqual(decoded_stream_name, stream_name)
+            self.assertEqual(token, stream.email_token)
+
+        self.assertEqual(decode_email_address('bogus'), None)
 
 class TestEmailMirrorLibrary(ZulipTestCase):
     def test_get_missed_message_token(self) -> None:
 
-        def get_token(address: Text) -> Text:
+        def get_token(address: str) -> str:
             with self.settings(EMAIL_GATEWAY_PATTERN="%s@example.com"):
                 return get_missed_message_token_from_address(address)
 
@@ -82,6 +117,55 @@ class TestStreamEmailMessagesSuccess(ZulipTestCase):
         self.login(user_profile.email)
         self.subscribe(user_profile, "Denmark")
         stream = get_stream("Denmark", user_profile.realm)
+
+        stream_to_address = encode_email_address(stream)
+
+        incoming_valid_message = MIMEText('TestStreamEmailMessages Body')  # type: Any # https://github.com/python/typeshed/issues/275
+
+        incoming_valid_message['Subject'] = 'TestStreamEmailMessages Subject'
+        incoming_valid_message['From'] = self.example_email('hamlet')
+        incoming_valid_message['To'] = stream_to_address
+        incoming_valid_message['Reply-to'] = self.example_email('othello')
+
+        process_message(incoming_valid_message)
+
+        # Hamlet is subscribed to this stream so should see the email message from Othello.
+        message = most_recent_message(user_profile)
+
+        self.assertEqual(message.content, "TestStreamEmailMessages Body")
+        self.assertEqual(get_display_recipient(message.recipient), stream.name)
+        self.assertEqual(message.topic_name(), incoming_valid_message['Subject'])
+
+    def test_receive_stream_email_messages_blank_subject_success(self) -> None:
+        user_profile = self.example_user('hamlet')
+        self.login(user_profile.email)
+        self.subscribe(user_profile, "Denmark")
+        stream = get_stream("Denmark", user_profile.realm)
+
+        stream_to_address = encode_email_address(stream)
+
+        incoming_valid_message = MIMEText('TestStreamEmailMessages Body')  # type: Any # https://github.com/python/typeshed/issues/275
+
+        incoming_valid_message['Subject'] = ''
+        incoming_valid_message['From'] = self.example_email('hamlet')
+        incoming_valid_message['To'] = stream_to_address
+        incoming_valid_message['Reply-to'] = self.example_email('othello')
+
+        process_message(incoming_valid_message)
+
+        # Hamlet is subscribed to this stream so should see the email message from Othello.
+        message = most_recent_message(user_profile)
+
+        self.assertEqual(message.content, "TestStreamEmailMessages Body")
+        self.assertEqual(get_display_recipient(message.recipient), stream.name)
+        self.assertEqual(message.topic_name(), "(no topic)")
+
+    def test_receive_private_stream_email_messages_success(self) -> None:
+        user_profile = self.example_user('hamlet')
+        self.login(user_profile.email)
+        self.make_stream("private_stream", invite_only=True)
+        self.subscribe(user_profile, "private_stream")
+        stream = get_stream("private_stream", user_profile.realm)
 
         stream_to_address = encode_email_address(stream)
 
@@ -325,8 +409,6 @@ class TestReplyExtraction(ZulipTestCase):
 
         self.assertEqual(message.content, 'Reply')
 
-MAILS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fixtures", "email")
-
 
 class TestScriptMTA(ZulipTestCase):
 
@@ -338,9 +420,7 @@ class TestScriptMTA(ZulipTestCase):
         stream = get_stream("Denmark", get_realm("zulip"))
         stream_to_address = encode_email_address(stream)
 
-        template_path = os.path.join(MAILS_DIR, "simple.txt")
-        with open(template_path) as template_file:
-            mail_template = template_file.read()
+        mail_template = self.fixture_data('simple.txt', type='email')
         mail = mail_template.format(stream_to_address=stream_to_address, sender=sender)
         read_pipe, write_pipe = os.pipe()
         os.write(write_pipe, mail.encode())
@@ -356,9 +436,7 @@ class TestScriptMTA(ZulipTestCase):
         sender = self.example_email('hamlet')
         stream = get_stream("Denmark", get_realm("zulip"))
         stream_to_address = encode_email_address(stream)
-        template_path = os.path.join(MAILS_DIR, "simple.txt")
-        with open(template_path) as template_file:
-            mail_template = template_file.read()
+        mail_template = self.fixture_data('simple.txt', type='email')
         mail = mail_template.format(stream_to_address=stream_to_address, sender=sender)
         read_pipe, write_pipe = os.pipe()
         os.write(write_pipe, mail.encode())
@@ -379,7 +457,7 @@ class TestScriptMTA(ZulipTestCase):
 
 class TestEmailMirrorTornadoView(ZulipTestCase):
 
-    def send_private_message(self) -> Text:
+    def send_private_message(self) -> str:
         email = self.example_email('othello')
         self.login(email)
         result = self.client_post(
@@ -399,9 +477,7 @@ class TestEmailMirrorTornadoView(ZulipTestCase):
     @mock.patch('zerver.lib.email_mirror.queue_json_publish')
     def send_offline_message(self, to_address: str, sender: str,
                              mock_queue_json_publish: mock.Mock) -> HttpResponse:
-        template_path = os.path.join(MAILS_DIR, "simple.txt")
-        with open(template_path) as template_file:
-            mail_template = template_file.read()
+        mail_template = self.fixture_data('simple.txt', type='email')
         mail = mail_template.format(stream_to_address=to_address, sender=sender)
 
         def check_queue_json_publish(queue_name: str,

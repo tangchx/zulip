@@ -101,7 +101,7 @@ def home(request):
 ### Writing a template
 
 Templates for the main website are found in
-[templates/zerver](https://github.com/zulip/zulip/blob/master/templates/zerver).
+[templates/zerver/app](https://github.com/zulip/zulip/blob/master/templates/zerver/app).
 
 
 ## Writing API REST endpoints
@@ -275,7 +275,7 @@ and in [zerver/lib/actions.py](https://github.com/zulip/zulip/blob/master/zerver
 
 ```py
 def do_set_realm_name(realm, name):
-    # type: (Realm, Text) -> None
+    # type: (Realm, str) -> None
     realm.name = name
     realm.save(update_fields=['name'])
     event = dict(
@@ -345,9 +345,9 @@ These endpoints make use of some older authentication decorators,
 `authenticated_json_api_view`, `authenticated_json_post_view`, and
 `authenticated_json_view`, so you may see them in the code.
 
-## Webhook integration endpoints
+## Incoming webhook integrations
 
-Webhooks are called by other services, often to send a message as part
+Incoming webhooks are called by other services, often to send a message as part
 of those services' integrations. They are most often POST requests, and
 often there is very little you can customize about them. Usually you can
 expect that the webhook for a service will allow specification for the

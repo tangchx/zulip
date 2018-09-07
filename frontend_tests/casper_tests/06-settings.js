@@ -1,6 +1,7 @@
 var common = require('../casper_lib/common.js').common;
 var test_credentials = require('../../var/casper/test_credentials.js').test_credentials;
 var OUTGOING_WEBHOOK_BOT_TYPE = '3';
+var GENERIC_BOT_TYPE = '1';
 
 common.start_and_log_in();
 
@@ -8,7 +9,8 @@ common.start_and_log_in();
 
 // var form_sel = 'form[action^="/json/settings"]';
 var regex_zuliprc = /^data:application\/octet-stream;charset=utf-8,\[api\]\nemail=.+\nkey=.+\nsite=.+\n$/;
-var regex_flaskbotrc = /^data:application\/octet-stream;charset=utf-8,\[.\]\nemail=.+\nkey=.+\nsite=.+\n$/;
+var regex_outgoing_webhook_zuliprc = /^data:application\/octet-stream;charset=utf-8,\[api\]\nemail=.+\nkey=.+\nsite=.+\ntoken=.+\n$/;
+var regex_botserverrc = /^data:application\/octet-stream;charset=utf-8,\[\]\nemail=.+\nkey=.+\nsite=.+\ntoken=.+\n$/;
 
 casper.then(function () {
     var menu_selector = '#settings-dropdown';
@@ -65,9 +67,9 @@ casper.then(function () {
 */
 
 casper.then(function () {
-    casper.waitUntilVisible('#get_api_key_password', function () {
-        casper.fill('form[action^="/json/fetch_api_key"]', {password:test_credentials.default_user.password});
-        casper.click('button[name="view_api_key"]');
+    casper.waitUntilVisible('#get_api_key_button', function () {
+        casper.fill('#get_api_key_form', {password:test_credentials.default_user.password});
+        casper.click('#get_api_key_button');
     });
 });
 
@@ -110,7 +112,7 @@ casper.then(function () {
 });
 
 casper.then(function create_bot() {
-    casper.test.info('Filling out the create bot form');
+    casper.test.info('Filling out the create bot form for an outgoing webhook bot');
 
     casper.fill('#create_bot_form',{
         bot_name: 'Bot 1',
@@ -136,20 +138,51 @@ casper.then(function () {
     casper.waitUntilVisible(button_sel + '[href^="data:application"]', function () {
         casper.test.assertMatch(
             decodeURIComponent(casper.getElementsAttribute(button_sel, 'href')),
+            regex_outgoing_webhook_zuliprc,
+            'Looks like an outgoing webhook bot ~/.zuliprc file');
+    });
+});
+
+casper.then(function create_bot() {
+    casper.test.info('Filling out the create bot form for a normal bot');
+
+    casper.fill('#create_bot_form',{
+        bot_name: 'Bot 2',
+        bot_short_name: '2',
+        bot_type: GENERIC_BOT_TYPE,
+    });
+
+    casper.test.info('Submitting the create bot form');
+    casper.click('#create_bot_button');
+});
+
+var second_bot_email = '2-bot@zulip.zulipdev.com';
+var second_button_sel = '.download_bot_zuliprc[data-email="' + second_bot_email + '"]';
+
+casper.then(function () {
+    casper.waitUntilVisible(second_button_sel, function () {
+        casper.click(second_button_sel);
+    });
+});
+
+casper.then(function () {
+    casper.waitUntilVisible(second_button_sel + '[href^="data:application"]', function () {
+        casper.test.assertMatch(
+            decodeURIComponent(casper.getElementsAttribute(second_button_sel, 'href')),
             regex_zuliprc,
             'Looks like a bot ~/.zuliprc file');
     });
 });
 
 casper.then(function () {
-    casper.waitUntilVisible('#download_flaskbotrc', function () {
-        casper.click("#download_flaskbotrc");
+    casper.waitUntilVisible('#download_botserverrc', function () {
+        casper.click("#download_botserverrc");
 
-        casper.waitUntilVisible('#download_flaskbotrc[href^="data:application"]', function () {
+        casper.waitUntilVisible('#download_botserverrc[href^="data:application"]', function () {
             casper.test.assertMatch(
-                decodeURIComponent(casper.getElementsAttribute('#download_flaskbotrc', 'href')),
-                regex_flaskbotrc,
-                'Looks like a flaskbotrc file');
+                decodeURIComponent(casper.getElementsAttribute('#download_botserverrc', 'href')),
+                regex_botserverrc,
+                'Looks like a botserverrc file');
         });
     });
 });
@@ -166,15 +199,15 @@ casper.then(function () {
         var form_sel = '.edit_bot_form[data-email="' + bot_email + '"]';
         casper.test.info('Testing edit bot form values');
 
-    //     casper.test.assertEqual(
-    //         common.get_form_field_value(form_sel + ' [name=bot_name]'),
-    //         'Bot 1');
-    //     casper.test.assertEqual(
-    //         common.get_form_field_value(form_sel + ' [name=bot_default_sending_stream]'),
-    //         'Denmark');
-    //     casper.test.assertEqual(
-    //         common.get_form_field_value(form_sel + ' [name=bot_default_events_register_stream]'),
-    //         'Rome');
+        // casper.test.assertEqual(
+        //     common.get_form_field_value(form_sel + ' [name=bot_name]'),
+        //     'Bot 1');
+        // casper.test.assertEqual(
+        //     common.get_form_field_value(form_sel + ' [name=bot_default_sending_stream]'),
+        //     'Denmark');
+        // casper.test.assertEqual(
+        //     common.get_form_field_value(form_sel + ' [name=bot_default_events_register_stream]'),
+        //     'Rome');
         casper.test.assertEqual(
             common.get_form_field_value(form_sel + ' [name=bot_name]'),
             'Bot 1');
@@ -302,7 +335,7 @@ casper.thenClick('a[data-code="en"]');
  * Changing the language back to English so that subsequent tests pass.
  */
 casper.waitUntilVisible('#language-settings-status a', function () {
-    casper.test.assertSelectorHasText('#language-settings-status', 'Saved. Please reload for the change to take effect.');
+    casper.test.assertSelectorHasText('#language-settings-status', 'Gespeichert. Bitte lade die Seite neu um die Änderungen zu aktivieren.');
 });
 
 casper.thenOpen("http://zulip.zulipdev.com:9981/");

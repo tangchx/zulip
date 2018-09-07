@@ -58,8 +58,8 @@ exports.lower_bound = function (array, arg1, arg2, arg3, arg4) {
 
 exports.same_stream_and_topic = function util_same_stream_and_topic(a, b) {
     // Streams and topics are case-insensitive.
-    return ((a.stream_id === b.stream_id) &&
-            (a.subject.toLowerCase() === b.subject.toLowerCase()));
+    return a.stream_id === b.stream_id &&
+            a.subject.toLowerCase() === b.subject.toLowerCase();
 };
 
 exports.is_pm_recipient = function (email, message) {
@@ -74,7 +74,7 @@ exports.extract_pm_recipients = function (recipients) {
 };
 
 exports.same_recipient = function util_same_recipient(a, b) {
-    if ((a === undefined) || (b === undefined)) {
+    if (a === undefined || b === undefined) {
         return false;
     }
     if (a.type !== b.type) {
@@ -96,8 +96,8 @@ exports.same_recipient = function util_same_recipient(a, b) {
 };
 
 exports.same_sender = function util_same_sender(a, b) {
-    return ((a !== undefined) && (b !== undefined) &&
-            (a.sender_email.toLowerCase() === b.sender_email.toLowerCase()));
+    return a !== undefined && b !== undefined &&
+            a.sender_email.toLowerCase() === b.sender_email.toLowerCase();
 };
 
 exports.normalize_recipients = function (recipients) {
@@ -147,7 +147,7 @@ exports.make_strcmp = function () {
     }
 
     return function util_strcmp(a, b) {
-        return (a < b ? -1 : (a > b ? 1 : 0));
+        return a < b ? -1 : a > b ? 1 : 0;
     };
 };
 exports.strcmp = exports.make_strcmp();
@@ -198,7 +198,7 @@ exports.CachedValue.prototype = {
 };
 
 exports.is_all_or_everyone_mentioned = function (message_content) {
-    var all_everyone_re = /(^|\s)(@\*{2}(all|everyone)\*{2})($|\s)/;
+    var all_everyone_re = /(^|\s)(@\*{2}(all|everyone|stream)\*{2})($|\s)/;
     return all_everyone_re.test(message_content);
 };
 
@@ -250,8 +250,26 @@ exports.prefix_sort = function (query, objs, get_item) {
             noMatch.push(obj);
         }
     }
-    return { matches: beginswithCaseSensitive.concat(beginswithCaseInsensitive),
-             rest:    noMatch };
+    return {
+        matches: beginswithCaseSensitive.concat(beginswithCaseInsensitive),
+        rest: noMatch,
+    };
+};
+
+function to_int(s) {
+    return parseInt(s, 10);
+}
+
+exports.sorted_ids = function (ids) {
+    // This mapping makes sure we are using ints, and
+    // it also makes sure we don't mutate the list.
+    var id_list = _.map(ids, to_int);
+    id_list.sort(function (a, b) {
+        return a - b;
+    });
+    id_list = _.uniq(id_list, true);
+
+    return id_list;
 };
 
 return exports;
@@ -260,3 +278,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = util;
 }
+window.util = util;

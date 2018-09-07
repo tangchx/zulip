@@ -1,12 +1,12 @@
 
-from typing import Any, Callable, Dict, List, Set, Text
+from typing import Any, Callable, Dict, List, Set
 
 from django.db import connection
 
 from zerver.lib.management import ZulipBaseCommand
 
-def create_index_if_not_exist(index_name: Text, table_name: Text,
-                              column_string: Text, where_clause: Text) -> None:
+def create_index_if_not_exist(index_name: str, table_name: str,
+                              column_string: str, where_clause: str) -> None:
     #
     #  This function is somewhat similar to
     #  zerver.lib.migrate.create_index_if_not_exist.
@@ -86,6 +86,22 @@ def create_indexes() -> None:
         table_name='zerver_usermessage',
         column_string='user_profile_id, message_id',
         where_clause='WHERE (flags & 8) != 0 OR (flags & 16) != 0',
+    )
+
+    # copied from 0177
+    create_index_if_not_exist(
+        index_name='zerver_usermessage_is_private_message_id',
+        table_name='zerver_usermessage',
+        column_string='user_profile_id, message_id',
+        where_clause='WHERE (flags & 2048) != 0',
+    )
+
+    # copied from 0180
+    create_index_if_not_exist(
+        index_name='zerver_usermessage_active_mobile_push_notification_id',
+        table_name='zerver_usermessage',
+        column_string='user_profile_id, message_id',
+        where_clause='WHERE (flags & 4096) != 0',
     )
 
 class Command(ZulipBaseCommand):

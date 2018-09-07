@@ -1,6 +1,9 @@
+set_global('i18n', global.stub_i18n);
+zrequire('dict');
 zrequire('compose_state');
 zrequire('ui_util');
 zrequire('pm_conversations');
+zrequire('emoji');
 zrequire('util');
 zrequire('Handlebars', 'handlebars');
 zrequire('templates');
@@ -11,42 +14,77 @@ zrequire('stream_data');
 zrequire('user_pill');
 zrequire('compose_pm_pill');
 zrequire('composebox_typeahead');
+zrequire('recent_senders');
+set_global('md5', function (s) {
+    return 'md5-' + s;
+});
+
+// To be eliminated in next commit:
+stream_data.update_calculated_fields = () => {};
+
+set_global('topic_data', {
+});
 
 var ct = composebox_typeahead;
 var noop = function () {};
 
+set_global('blueslip', {});
+blueslip.warn = noop;
+
 var emoji_stadium = {
     emoji_name: 'stadium',
     emoji_url: 'TBD',
+    codepoint: '1f3df',
 };
 var emoji_tada = {
     emoji_name: 'tada',
     emoji_url: 'TBD',
+    codepoint: '1f389',
 };
 var emoji_moneybag = {
     emoji_name: 'moneybag',
     emoji_url: 'TBD',
+    codepoint: '1f4b0',
 };
 var emoji_japanese_post_office = {
     emoji_name: 'japanese_post_office',
     emoji_url: 'TBD',
+    codepoint: '1f3e3',
 };
 var emoji_panda_face = {
     emoji_name: 'panda_face',
     emoji_url: 'TBD',
+    codepoint: '1f43c',
 };
 var emoji_see_no_evil = {
     emoji_name: 'see_no_evil',
     emoji_url: 'TBD',
+    codepoint: '1f648',
 };
 var emoji_thumbs_up = {
-    emoji_name: '+1',
+    emoji_name: 'thumbs_up',
     emoji_url: 'TBD',
+    codepoint: '1f44d',
+};
+var emoji_thermometer = {
+    emoji_name: 'thermometer',
+    emoji_url: 'TBD',
+    codepoint: '1f321',
+};
+var emoji_heart = {
+    emoji_name: 'heart',
+    emoji_url: 'TBD',
+    codepoint: '2764',
+};
+var emoji_headphones = {
+    emoji_name: 'headphones',
+    emoji_url: 'TBD',
+    codepoint: '1f3a7',
 };
 
 var emoji_list = [emoji_tada, emoji_moneybag, emoji_stadium, emoji_japanese_post_office,
-                  emoji_panda_face, emoji_see_no_evil, emoji_thumbs_up];
-var stream_list = ['Denmark', 'Sweden', 'The Netherlands'];
+                  emoji_panda_face, emoji_see_no_evil, emoji_thumbs_up, emoji_thermometer,
+                  emoji_heart, emoji_headphones];
 var sweden_stream = {
     name: 'Sweden',
     description: 'Cold, mountains and home decor.',
@@ -63,7 +101,12 @@ var netherland_stream = {
     name: 'The Netherlands',
     description: 'The Netherlands, city of dream.',
     stream_id: 3,
+    subscribed: false,
 };
+
+stream_data.add_sub('Sweden', sweden_stream);
+stream_data.add_sub('Denmark', denmark_stream);
+stream_data.add_sub('The Netherlands', netherland_stream);
 
 set_global('$', global.make_zjquery());
 
@@ -73,23 +116,14 @@ set_global('compose', {
     finish: noop,
 });
 
-set_global('emoji', {
-    active_realm_emojis: {},
-    emojis: emoji_list,
-});
+emoji.active_realm_emojis = {};
+emoji.emojis = emoji_list;
+
 set_global('pygments_data', {langs:
     {python: 0, javscript: 1, html: 2, css: 3},
 });
 
 global.compile_template('typeahead_list_item');
-
-stream_data.get_streams_for_settings_page = function () {
-    return stream_list;
-};
-
-stream_data.subscribed_streams = function () {
-    return stream_list;
-};
 
 var hamlet = {
     email: 'hamlet@zulip.com',
@@ -118,18 +152,31 @@ var lear = {
     full_name: "King Lear",
 };
 
+var twin1 = {
+    full_name: 'Mark Twin',
+    user_id: 105,
+    email: 'twin1@zulip.com',
+};
+
+var twin2 = {
+    full_name: 'Mark Twin',
+    user_id: 106,
+    email: 'twin2@zulip.com',
+};
 
 global.people.add_in_realm(hamlet);
 global.people.add_in_realm(othello);
 global.people.add_in_realm(cordelia);
 global.people.add_in_realm(lear);
+global.people.add_in_realm(twin1);
+global.people.add_in_realm(twin2);
 global.people.add(deactivated_user);
 
 var hamletcharacters = {
     name: "hamletcharacters",
     id: 1,
     description: "Characters of Hamlet",
-    members: [],
+    members: [100, 104],
 };
 
 var backend = {
@@ -142,29 +189,22 @@ var backend = {
 global.user_groups.add(hamletcharacters);
 global.user_groups.add(backend);
 
-user_pill.get_user_ids = function () {
-    return [];
-};
-
-(function test_add_topic() {
-    ct.add_topic('Denmark', 'civil fears');
-    ct.add_topic('devel', 'fading');
-    ct.add_topic('denmark', 'acceptance');
-    ct.add_topic('denmark', 'Acceptance');
-    ct.add_topic('Denmark', 'With Twisted Metal');
+run_test('topics_seen_for', () => {
+    topic_data.get_recent_names = (stream_id) => {
+        assert.equal(stream_id, denmark_stream.stream_id);
+        return ['With Twisted Metal', 'acceptance', 'civil fears'];
+    };
 
     assert.deepEqual(
         ct.topics_seen_for('Denmark'),
         ['With Twisted Metal', 'acceptance', 'civil fears']
     );
-}());
 
-(function test_topics_seen_for() {
     // Test when the stream doesn't exist (there are no topics)
     assert.deepEqual(ct.topics_seen_for('non-existing-stream'), []);
-}());
+});
 
-(function test_content_typeahead_selected() {
+run_test('content_typeahead_selected', () => {
     var fake_this = {
         query: '',
         $element: {},
@@ -218,8 +258,17 @@ user_pill.get_user_ids = function () {
     expected_value = '{ :octopus: ';
     assert.equal(actual_value, expected_value);
 
+
+
     // mention
     fake_this.completing = 'mention';
+
+    fake_this.query = '@**Mark Tw';
+    fake_this.token = 'Mark Tw';
+    actual_value = ct.content_typeahead_selected.call(fake_this, twin1);
+    expected_value = '@**Mark Twin|105** ';
+    assert.equal(actual_value, expected_value);
+
     var document_stub_trigger1_called = false;
     $('document-stub').trigger = function (event, params) {
         assert.equal(event, 'usermention_completed.zulip');
@@ -325,22 +374,24 @@ user_pill.get_user_ids = function () {
     assert(document_stub_trigger1_called);
     assert(document_stub_group_trigger_called);
     assert(document_stub_trigger2_called);
-}());
+});
 
-(function test_initialize() {
+function sorted_names_from(subs) {
+    return _.pluck(subs, 'name').sort();
+}
+
+run_test('initialize', () => {
+    var expected_value;
+
     var stream_typeahead_called = false;
     $('#stream').typeahead = function (options) {
         // options.source()
         //
-        // We'll search through the streams in stream_list for the streams
-        // typeahead.
         var actual_value = options.source();
-        var expected_value = stream_list;
-        assert.deepEqual(actual_value, expected_value);
+        assert.deepEqual(actual_value.sort(), ['Denmark', 'Sweden']);
 
         // options.highlighter()
-        options.query = 'De';  // Beginning of "Denmark", one of the streams
-                               // provided in stream_list through .source().
+        options.query = 'De';
         actual_value = options.highlighter('Denmark');
         expected_value = '<strong>Denmark</strong>';
         assert.equal(actual_value, expected_value);
@@ -368,14 +419,12 @@ user_pill.get_user_ids = function () {
 
     var subject_typeahead_called = false;
     $('#subject').typeahead = function (options) {
-        // options.source()
-        ct.add_topic('Sweden', 'furniture');
-        ct.add_topic('Sweden', 'kronor');
-        ct.add_topic('Sweden', 'ice');
-        ct.add_topic('Sweden', 'more ice');
-        ct.add_topic('Sweden', 'even more ice');
-        ct.add_topic('Sweden', '<&>');
         var topics = ['<&>', 'even more ice', 'furniture', 'ice', 'kronor', 'more ice'];
+        topic_data.get_recent_names = (stream_id) => {
+            assert.equal(stream_id, sweden_stream.stream_id);
+            return topics;
+        };
+
         $('#stream').val('Sweden');
         var actual_value = options.source();
         // Topics should be sorted alphabetically, not by addition order.
@@ -403,7 +452,7 @@ user_pill.get_user_ids = function () {
         //
         // Notice that alphabetical sorting isn't managed by this sorter,
         // it is a result of the topics already being sorted after adding
-        // them with ct.add_topic().
+        // them with add_topic().
         options.query = 'furniture';
         actual_value = options.sorter(['furniture']);
         expected_value = ['furniture'];
@@ -435,9 +484,15 @@ user_pill.get_user_ids = function () {
 
     var pm_recipient_typeahead_called = false;
     $('#private_message_recipient').typeahead = function (options) {
+        var inserted_users = [];
+        user_pill.get_user_ids = function () {
+            return inserted_users;
+        };
+
         // This should match the users added at the beginning of this test file.
         var actual_value = options.source();
-        var expected_value = [hamlet, othello, cordelia, lear];
+        var expected_value = [hamlet, othello, cordelia, lear,
+                              twin1, twin2, hamletcharacters, backend];
         assert.deepEqual(actual_value, expected_value);
 
         // Even though the items passed to .highlighter() are the full
@@ -446,17 +501,17 @@ user_pill.get_user_ids = function () {
         // corresponding parts in bold.
         options.query = 'oth';
         actual_value = options.highlighter(othello);
-        expected_value = '<strong>Othello, the Moor of Venice</strong>&nbsp;&nbsp;\n<small class="autocomplete_secondary">othello@zulip.com</small>\n';
+        expected_value = '        <img class="typeahead-image" src="https://secure.gravatar.com/avatar/md5-othello@zulip.com?d&#x3D;identicon&amp;s&#x3D;50" />\n<strong>Othello, the Moor of Venice</strong>&nbsp;&nbsp;\n<small class="autocomplete_secondary">othello@zulip.com</small>\n';
         assert.equal(actual_value, expected_value);
 
         options.query = 'Lear';
         actual_value = options.highlighter(cordelia);
-        expected_value = '<strong>Cordelia Lear</strong>&nbsp;&nbsp;\n<small class="autocomplete_secondary">cordelia@zulip.com</small>\n';
+        expected_value = '        <img class="typeahead-image" src="https://secure.gravatar.com/avatar/md5-cordelia@zulip.com?d&#x3D;identicon&amp;s&#x3D;50" />\n<strong>Cordelia Lear</strong>&nbsp;&nbsp;\n<small class="autocomplete_secondary">cordelia@zulip.com</small>\n';
         assert.equal(actual_value, expected_value);
 
         options.query = 'othello@zulip.com, co';
         actual_value = options.highlighter(cordelia);
-        expected_value = '<strong>Cordelia Lear</strong>&nbsp;&nbsp;\n<small class="autocomplete_secondary">cordelia@zulip.com</small>\n';
+        expected_value = '        <img class="typeahead-image" src="https://secure.gravatar.com/avatar/md5-cordelia@zulip.com?d&#x3D;identicon&amp;s&#x3D;50" />\n<strong>Cordelia Lear</strong>&nbsp;&nbsp;\n<small class="autocomplete_secondary">cordelia@zulip.com</small>\n';
         assert.equal(actual_value, expected_value);
 
         // options.matcher()
@@ -498,13 +553,20 @@ user_pill.get_user_ids = function () {
         // A literal match at the beginning of an element puts it at the top.
         options.query = 'co';  // Matches everything ("x@zulip.COm")
         actual_value = options.sorter([othello, deactivated_user, cordelia]);
-        expected_value = [cordelia, deactivated_user, othello];
+        expected_value = [cordelia, othello, deactivated_user];
         assert.deepEqual(actual_value, expected_value);
 
         options.query = 'non-existing-user';
         actual_value = options.sorter([]);
         expected_value = [];
         assert.deepEqual(actual_value, expected_value);
+
+        // Adds a `no break-space` at the end. This should fail
+        // if there wasn't any logic replacing `no break-space`
+        // with normal space.
+        options.query = 'cordelia' + String.fromCharCode(160);
+        assert.equal(options.matcher(cordelia), true);
+        assert.equal(options.matcher(othello), false);
 
         var event = {
             target: '#doesnotmatter',
@@ -531,6 +593,36 @@ user_pill.get_user_ids = function () {
         actual_value = options.updater(othello, click_event);
         assert.equal(appended_name, 'Othello, the Moor of Venice');
 
+        var appended_names = [];
+        people.get_person_from_user_id = function (user_id) {
+            var users = {100: hamlet, 104: lear};
+            return users[user_id];
+        };
+        people.my_current_email = function () {
+            return 'hamlet@zulip.com';
+        };
+        compose_pm_pill.set_from_typeahead = function (item) {
+            appended_names.push(item.full_name);
+        };
+
+        var cleared = false;
+        function fake_clear() {
+            cleared = true;
+        }
+        compose_pm_pill.widget = {clear_text: fake_clear};
+
+        options.query = 'hamletchar';
+        options.updater(hamletcharacters, event);
+        assert.deepEqual(appended_names, ['King Lear']);
+        assert(cleared);
+
+        inserted_users = [lear.user_id];
+        appended_names = [];
+        cleared = false;
+        options.updater(hamletcharacters, event);
+        assert.deepEqual(appended_names, []);
+        assert(cleared);
+
         pm_recipient_typeahead_called = true;
     };
 
@@ -551,8 +643,10 @@ user_pill.get_user_ids = function () {
         };
         fake_this.options = options;
         var actual_value = options.source.call(fake_this, 'test #s');
-        var expected_value = stream_list;
-        assert.deepEqual(actual_value, expected_value);
+        assert.deepEqual(
+            sorted_names_from(actual_value),
+            ['Denmark', 'Sweden', 'The Netherlands']
+        );
         assert(caret_called);
 
         // options.highlighter()
@@ -561,12 +655,12 @@ user_pill.get_user_ids = function () {
         // content_highlighter.
         fake_this = { completing: 'mention', token: 'othello' };
         actual_value = options.highlighter.call(fake_this, othello);
-        expected_value = '<strong>Othello, the Moor of Venice</strong>&nbsp;&nbsp;\n<small class="autocomplete_secondary">othello@zulip.com</small>\n';
+        expected_value = '        <img class="typeahead-image" src="https://secure.gravatar.com/avatar/md5-othello@zulip.com?d&#x3D;identicon&amp;s&#x3D;50" />\n<strong>Othello, the Moor of Venice</strong>&nbsp;&nbsp;\n<small class="autocomplete_secondary">othello@zulip.com</small>\n';
         assert.equal(actual_value, expected_value);
 
         fake_this = { completing: 'mention', token: 'hamletcharacters' };
         actual_value = options.highlighter.call(fake_this, hamletcharacters);
-        expected_value = '<strong>hamletcharacters</strong>&nbsp;&nbsp;\n<small class="autocomplete_secondary">Characters of Hamlet</small>\n';
+        expected_value = '        <i class="typeahead-image icon fa fa-group" aria-hidden="true"></i>\n<strong>hamletcharacters</strong>&nbsp;&nbsp;\n<small class="autocomplete_secondary">Characters of Hamlet</small>\n';
         assert.equal(actual_value, expected_value);
 
         // options.matcher()
@@ -597,6 +691,16 @@ user_pill.get_user_ids = function () {
         fake_this = { completing: 'emoji', token: 'ta' };
         actual_value = options.sorter.call(fake_this, [emoji_stadium, emoji_tada]);
         expected_value = [emoji_tada, emoji_stadium];
+        assert.deepEqual(actual_value, expected_value);
+
+        fake_this = { completing: 'emoji', token: 'th' };
+        actual_value = options.sorter.call(fake_this, [emoji_thermometer, emoji_thumbs_up]);
+        expected_value = [emoji_thumbs_up, emoji_thermometer];
+        assert.deepEqual(actual_value, expected_value);
+
+        fake_this = { completing: 'emoji', token: 'he' };
+        actual_value = options.sorter.call(fake_this, [emoji_headphones, emoji_heart]);
+        expected_value = [emoji_heart, emoji_headphones];
         assert.deepEqual(actual_value, expected_value);
 
         fake_this = { completing: 'mention', token: 'co' };
@@ -711,9 +815,9 @@ user_pill.get_user_ids = function () {
         pm_recipient_blur_called = true;
     };
 
-    page_params.enter_sends = false;  // We manually specify it the first
-                                      // time because the click_func
-                                      // doesn't exist yet.
+    page_params.enter_sends = false;
+    // We manually specify it the first time because the click_func
+    // doesn't exist yet.
     $("#stream").select(noop);
     $("#subject").select(noop);
     $("#private_message_recipient").select(noop);
@@ -866,12 +970,23 @@ user_pill.get_user_ids = function () {
     assert(compose_textarea_typeahead_called);
     assert(focus_handler_called);
     assert(stream_one_called);
-}());
+});
 
-(function test_begins_typeahead() {
+run_test('begins_typeahead', () => {
 
     var begin_typehead_this = {options: {completions: {
         emoji: true, mention: true, stream: true, syntax: true}}};
+
+    function get_values(input, rest) {
+        // Stub out split_at_cursor that uses $(':focus')
+        ct.split_at_cursor = function () {
+            return [input, rest];
+        };
+        var values = ct.compose_content_begins_typeahead.call(
+            begin_typehead_this, input
+        );
+        return values;
+    }
 
     function assert_typeahead_equals(input, rest, reference) {
         // Usage:
@@ -882,30 +997,29 @@ user_pill.get_user_ids = function () {
             reference = rest;
             rest = '';
         }
-        // Stub out split_at_cursor that uses $(':focus')
-        ct.split_at_cursor = function () {
-            return [input, rest];
-        };
-        var returned = ct.compose_content_begins_typeahead.call(
-            begin_typehead_this, input
-        );
-        assert.deepEqual(returned, reference);
+        var values = get_values(input, rest);
+        assert.deepEqual(values, reference);
     }
 
-    var all_items = [
-        {
-            special_item_text: 'all (Notify everyone)',
-            email: 'all',
+    function assert_stream_list(input, rest) {
+        if (rest === undefined) {
+            rest = '';
+        }
+        var values = get_values(input, rest);
+        assert.deepEqual(
+            sorted_names_from(values),
+            ['Denmark', 'Sweden', 'The Netherlands']
+        );
+    }
+
+    var all_items = _.map(['all', 'everyone', 'stream'], function (mention) {
+        return {
+            special_item_text: 'translated: ' + mention + " (Notify stream)",
+            email: mention,
             pm_recipient_count: Infinity,
-            full_name: 'all',
-        },
-        {
-            special_item_text: 'everyone (Notify everyone)',
-            email: 'everyone',
-            pm_recipient_count: Infinity,
-            full_name: 'everyone',
-        },
-    ];
+            full_name: mention,
+        };
+    });
 
     var people_with_all = global.people.get_realm_persons().concat(all_items);
     var all_mentions = people_with_all.concat(global.user_groups.get_realm_user_groups());
@@ -921,7 +1035,7 @@ user_pill.get_user_ids = function () {
     // Make sure that the last token is the one we read.
     assert_typeahead_equals("~~~ @zulip", all_mentions);
     assert_typeahead_equals("@zulip :ta", emoji_list);
-    assert_typeahead_equals(":tada: #foo", stream_list);
+    assert_stream_list(":tada: #foo");
     assert_typeahead_equals("#foo\n~~~py", lang_list);
 
     assert_typeahead_equals("@", false);
@@ -947,10 +1061,12 @@ user_pill.get_user_ids = function () {
     assert_typeahead_equals(" :", false);
     assert_typeahead_equals(":)", false);
     assert_typeahead_equals(":4", false);
+    assert_typeahead_equals(": la", false);
     assert_typeahead_equals("test :-P", false);
     assert_typeahead_equals("hi emoji :", false);
     assert_typeahead_equals("hi emoj:i", false);
     assert_typeahead_equals("hi emoji :D", false);
+    assert_typeahead_equals("hi emoji : t", false);
     assert_typeahead_equals("hi emoji :t", emoji_list);
     assert_typeahead_equals("hi emoji :ta", emoji_list);
     assert_typeahead_equals("hi emoji :da", emoji_list);
@@ -971,10 +1087,10 @@ user_pill.get_user_ids = function () {
     assert_typeahead_equals("test #", false);
     assert_typeahead_equals("test # a", false);
     assert_typeahead_equals("test no#o", false);
-    assert_typeahead_equals("#s", stream_list);
-    assert_typeahead_equals(" #s", stream_list);
-    assert_typeahead_equals("test #D", stream_list);
-    assert_typeahead_equals("test #**v", stream_list);
+    assert_stream_list("#s");
+    assert_stream_list(" #s");
+    assert_stream_list("test #D");
+    assert_stream_list("test #**v");
 
     assert_typeahead_equals("```", false);
     assert_typeahead_equals("``` ", false);
@@ -1008,15 +1124,15 @@ user_pill.get_user_ids = function () {
     assert_typeahead_equals("~~~test", "ing", false);
     var terminal_symbols = ',.;?!()[] "\'\n\t';
     terminal_symbols.split().forEach(symbol => {
-        assert_typeahead_equals("#test", symbol, stream_list);
+        assert_stream_list("#test", symbol);
         assert_typeahead_equals("@test", symbol, all_mentions);
         assert_typeahead_equals(":test", symbol, emoji_list);
         assert_typeahead_equals("```test", symbol, lang_list);
         assert_typeahead_equals("~~~test", symbol, lang_list);
     });
-}());
+});
 
-(function test_tokenizing() {
+run_test('tokenizing', () => {
     assert.equal(ct.tokenize_compose_str("foo bar"), "");
     assert.equal(ct.tokenize_compose_str("foo#@:bar"), "");
     assert.equal(ct.tokenize_compose_str("foo bar [#alic"), "#alic");
@@ -1035,9 +1151,9 @@ user_pill.get_user_ids = function () {
     assert.equal(ct.tokenize_compose_str(
         "foo @toomanycharactersisridiculoustocomplete"), "");
     assert.equal(ct.tokenize_compose_str("foo #streams@foo"), "#streams@foo");
-}());
+});
 
-(function test_content_highlighter() {
+run_test('content_highlighter', () => {
     var fake_this = { completing: 'emoji' };
     var emoji = { emoji_name: 'person shrugging', emoji_url: '¯\_(ツ)_/¯' };
     var th_render_typeahead_item_called = false;
@@ -1087,23 +1203,17 @@ user_pill.get_user_ids = function () {
     assert(th_render_user_group_called);
     assert(th_render_stream_called);
     assert(th_render_typeahead_item_called);
-}());
+});
 
-(function test_typeahead_results() {
-    var all_items = [
-        {
-            special_item_text: 'all (Notify everyone)',
-            email: 'all',
+run_test('typeahead_results', () => {
+    var all_items = _.map(['all', 'everyone', 'stream'], function (mention) {
+        return {
+            special_item_text: 'translated: ' + mention + " (Notify stream)",
+            email: mention,
             pm_recipient_count: Infinity,
-            full_name: 'all',
-        },
-        {
-            special_item_text: 'everyone (Notify everyone)',
-            email: 'everyone',
-            pm_recipient_count: Infinity,
-            full_name: 'everyone',
-        },
-    ];
+            full_name: mention,
+        };
+    });
     var people_with_all = global.people.get_realm_persons().concat(all_items);
     var all_mentions = people_with_all.concat(global.user_groups.get_realm_user_groups());
     var stream_list = [denmark_stream, sweden_stream, netherland_stream];
@@ -1135,14 +1245,14 @@ user_pill.get_user_ids = function () {
         assert.deepEqual(returned, expected);
     }
 
-    assert_emoji_matches('da',[{emoji_name: "tada", emoji_url: "TBD"},
-        {emoji_name: "panda_face", emoji_url: "TBD"}]);
+    assert_emoji_matches('da',[{emoji_name: "tada", emoji_url: "TBD", codepoint: "1f389"},
+                               {emoji_name: "panda_face", emoji_url: "TBD", codepoint: "1f43c"}]);
     assert_emoji_matches('da_', []);
     assert_emoji_matches('da ', []);
-    assert_emoji_matches('panda ', [{emoji_name: "panda_face", emoji_url: "TBD"}]);
-    assert_emoji_matches('panda_', [{emoji_name: "panda_face", emoji_url: "TBD"}]);
-    assert_emoji_matches('japanese_post_', [{emoji_name: "japanese_post_office", emoji_url: "TBD"}]);
-    assert_emoji_matches('japanese post ', [{emoji_name: "japanese_post_office", emoji_url: "TBD"}]);
+    assert_emoji_matches('panda ', [{emoji_name: "panda_face", emoji_url: "TBD", codepoint: "1f43c"}]);
+    assert_emoji_matches('panda_', [{emoji_name: "panda_face", emoji_url: "TBD", codepoint: "1f43c"}]);
+    assert_emoji_matches('japanese_post_', [{emoji_name: "japanese_post_office", emoji_url: "TBD", codepoint: "1f3e3"}]);
+    assert_emoji_matches('japanese post ', [{emoji_name: "japanese_post_office", emoji_url: "TBD", codepoint: "1f3e3"}]);
     assert_emoji_matches('notaemoji', []);
     // Autocomplete user mentions by user name.
     assert_mentions_matches('cordelia', [cordelia]);
@@ -1152,6 +1262,7 @@ user_pill.get_user_ids = function () {
     assert_mentions_matches('King H', [hamlet]);
     assert_mentions_matches('King L', [lear]);
     assert_mentions_matches('delia lear', []);
+    assert_mentions_matches('Mark Tw', [twin1, twin2]);
     // Autocomplete user group mentions by group name.
     assert_mentions_matches('hamletchar', [hamletcharacters]);
     // Autocomplete user group mentions by group descriptions.
@@ -1168,4 +1279,4 @@ user_pill.get_user_ids = function () {
     assert_stream_matches('cold', [sweden_stream, denmark_stream]);
     assert_stream_matches('the ', [netherland_stream]);
     assert_stream_matches('city', [netherland_stream]);
-}());
+});

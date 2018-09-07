@@ -1,6 +1,6 @@
 # Webhooks for external integrations.
 import re
-from typing import Any, Dict, Text, Optional
+from typing import Any, Dict, Optional
 
 from django.http import HttpRequest, HttpResponse
 from django.utils.translation import ugettext as _
@@ -16,7 +16,7 @@ from zerver.models import UserProfile
 def api_appfollow_webhook(request: HttpRequest, user_profile: UserProfile,
                           payload: Dict[str, Any]=REQ(argument_type="body")) -> HttpResponse:
     message = payload["text"]
-    app_name_search = re.search('\A(.+)', message)
+    app_name_search = re.search(r'\A(.+)', message)
     assert app_name_search is not None
     app_name = app_name_search.group(0)
     topic = app_name
@@ -25,7 +25,7 @@ def api_appfollow_webhook(request: HttpRequest, user_profile: UserProfile,
                                body=convert_markdown(message))
     return json_success()
 
-def convert_markdown(text: Text) -> Text:
+def convert_markdown(text: str) -> str:
     # Converts Slack-style markdown to Zulip format
     # Implemented mainly for AppFollow messages
     # Not ready for general use as some edge-cases not handled

@@ -1,7 +1,4 @@
 /*global Dict */
-var path = zrequire('path', 'path');
-var fs = zrequire('fs', 'fs');
-
 zrequire('hash_util');
 zrequire('katex', 'node_modules/katex/dist/katex.min.js');
 zrequire('marked', 'third/marked/lib/marked');
@@ -15,7 +12,7 @@ zrequire('emoji');
 zrequire('message_store');
 zrequire('markdown');
 
-set_global('window', {
+global.patch_builtin('window', {
     location: {
         origin: 'http://zulip.zulipdev.com',
     },
@@ -47,10 +44,10 @@ set_global('page_params', {
     translate_emoticons: false,
 });
 
-set_global('blueslip', {error: function () {}});
+set_global('blueslip', global.make_zblueslip());
 
 set_global('Image', function () {
-  return {};
+    return {};
 });
 emoji.initialize();
 
@@ -76,6 +73,30 @@ people.add({
     email: 'leo@zulip.com',
 });
 
+people.add({
+    full_name: 'Bobby <h1>Tables</h1>',
+    user_id: 103,
+    email: 'bobby@zulip.com',
+});
+
+people.add({
+    full_name: 'Mark Twin',
+    user_id: 104,
+    email: 'twin1@zulip.com',
+});
+
+people.add({
+    full_name: 'Mark Twin',
+    user_id: 105,
+    email: 'twin2@zulip.com',
+});
+
+people.add({
+    full_name: 'Brother of Bobby|123',
+    user_id: 106,
+    email: 'bobby2@zulip.com',
+});
+
 people.initialize_current_user(cordelia.user_id);
 
 var hamletcharacters = {
@@ -92,8 +113,16 @@ var backend = {
     members: [],
 };
 
+var edgecase_group = {
+    name: "Bobby <h1>Tables</h1>",
+    id: 3,
+    description: "HTML Syntax to check for Markdown edge cases.",
+    members: [],
+};
+
 global.user_groups.add(hamletcharacters);
 global.user_groups.add(backend);
+global.user_groups.add(edgecase_group);
 
 var stream_data = global.stream_data;
 var denmark = {
@@ -111,61 +140,68 @@ var social = {
     in_home_view: true,
     invite_only: true,
 };
+var edgecase_stream = {
+    subscribed: true,
+    color: 'green',
+    name: 'Bobby <h1>Tables</h1>',
+    stream_id: 3,
+    in_home_view: true,
+};
 stream_data.add_sub('Denmark', denmark);
 stream_data.add_sub('social', social);
+stream_data.add_sub('Bobby <h1>Tables</h1>', edgecase_stream);
 
 // Check the default behavior of fenced code blocks
 // works properly before markdown is initialized.
-(function test_fenced_block_defaults() {
+run_test('fenced_block_defaults', () => {
     var input = '\n```\nfenced code\n```\n\nand then after\n';
     var expected = '\n\n<div class="codehilite"><pre><span></span>fenced code\n</pre></div>\n\n\n\nand then after\n\n';
     var output = fenced_code.process_fenced_code(input);
     assert.equal(output, expected);
-}());
+});
 
 markdown.initialize();
 
-var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver/fixtures/markdown_test_cases.json'), 'utf8', 'r'));
+var bugdown_data = global.read_fixture_data('markdown_test_cases.json');
 
-(function test_bugdown_detection() {
-
+run_test('bugdown_detection', () => {
     var no_markup = [
-                     "This is a plaintext message",
-                     "This is a plaintext: message",
-                     "This is a :plaintext message",
-                     "This is a :plaintext message: message",
-                     "Contains a not an image.jpeg/ok file",
-                     "Contains a not an http://www.google.com/ok/image.png/stop file",
-                     "No png to be found here, a png",
-                     "No user mention **leo**",
-                     "No user mention @what there",
-                     "No group mention *hamletcharacters*",
-                     "We like to code\n~~~\ndef code():\n    we = \"like to do\"\n~~~",
-                     "This is a\nmultiline :emoji: here\n message",
-                     "This is an :emoji: message",
-                     "User Mention @**leo**",
-                     "User Mention @**leo f**",
-                     "User Mention @**leo with some name**",
-                     "Group Mention @*hamletcharacters*",
-                     "Stream #**Verona**",
-                     "This contains !gravatar(leo@zulip.com)",
-                     "And an avatar !avatar(leo@zulip.com) is here",
-                    ];
+        "This is a plaintext message",
+        "This is a plaintext: message",
+        "This is a :plaintext message",
+        "This is a :plaintext message: message",
+        "Contains a not an image.jpeg/ok file",
+        "Contains a not an http://www.google.com/ok/image.png/stop file",
+        "No png to be found here, a png",
+        "No user mention **leo**",
+        "No user mention @what there",
+        "No group mention *hamletcharacters*",
+        "We like to code\n~~~\ndef code():\n    we = \"like to do\"\n~~~",
+        "This is a\nmultiline :emoji: here\n message",
+        "This is an :emoji: message",
+        "User Mention @**leo**",
+        "User Mention @**leo f**",
+        "User Mention @**leo with some name**",
+        "Group Mention @*hamletcharacters*",
+        "Stream #**Verona**",
+        "This contains !gravatar(leo@zulip.com)",
+        "And an avatar !avatar(leo@zulip.com) is here",
+    ];
 
     var markup = [
-                   "Contains a https://zulip.com/image.png file",
-                   "Contains a https://zulip.com/image.jpg file",
-                   "https://zulip.com/image.jpg",
-                   "also https://zulip.com/image.jpg",
-                   "https://zulip.com/image.jpg too",
-                   "Contains a zulip.com/foo.jpeg file",
-                   "Contains a https://zulip.com/image.png file",
-                   "twitter url https://twitter.com/jacobian/status/407886996565016579",
-                   "https://twitter.com/jacobian/status/407886996565016579",
-                   "then https://twitter.com/jacobian/status/407886996565016579",
-                   "twitter url http://twitter.com/jacobian/status/407886996565016579",
-                   "youtube url https://www.youtube.com/watch?v=HHZ8iqswiCw&feature=youtu.be&a",
-                 ];
+        "Contains a https://zulip.com/image.png file",
+        "Contains a https://zulip.com/image.jpg file",
+        "https://zulip.com/image.jpg",
+        "also https://zulip.com/image.jpg",
+        "https://zulip.com/image.jpg too",
+        "Contains a zulip.com/foo.jpeg file",
+        "Contains a https://zulip.com/image.png file",
+        "twitter url https://twitter.com/jacobian/status/407886996565016579",
+        "https://twitter.com/jacobian/status/407886996565016579",
+        "then https://twitter.com/jacobian/status/407886996565016579",
+        "twitter url http://twitter.com/jacobian/status/407886996565016579",
+        "youtube url https://www.youtube.com/watch?v=HHZ8iqswiCw&feature=youtu.be&a",
+    ];
 
     no_markup.forEach(function (content) {
         assert.equal(markdown.contains_backend_only_syntax(content), false);
@@ -174,9 +210,9 @@ var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver
     markup.forEach(function (content) {
         assert.equal(markdown.contains_backend_only_syntax(content), true);
     });
-}());
+});
 
-(function test_marked_shared() {
+run_test('marked_shared', () => {
     var tests = bugdown_data.regular_tests;
 
     tests.forEach(function (test) {
@@ -200,9 +236,9 @@ var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver
             global.bugdown_assert.equal(test.expected_output, output, error_message);
         }
     });
-}());
+});
 
-(function test_message_flags() {
+run_test('message_flags', () => {
     var message = {raw_content: '@**Leo**'};
     markdown.apply_markdown(message);
     assert(!message.mentioned);
@@ -217,9 +253,9 @@ var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver
     markdown.apply_markdown(message);
     assert(message.mentioned);
     assert(!message.mentioned_me_directly);
-}());
+});
 
-(function test_marked() {
+run_test('marked', () => {
     var test_cases = [
         {input: 'hello', expected: '<p>hello</p>'},
         {input: 'hello there', expected: '<p>hello there</p>'},
@@ -286,14 +322,24 @@ var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver
         {input: 'T\n#**Denmark**',
          expected: '<p>T<br>\n<a class="stream" data-stream-id="1" href="http://zulip.zulipdev.com/#narrow/stream/1-Denmark">#Denmark</a></p>'},
         {input: 'T\n@**Cordelia Lear**',
-          expected: '<p>T<br>\n<span class="user-mention" data-user-id="101">@Cordelia Lear</span></p>'},
+         expected: '<p>T<br>\n<span class="user-mention" data-user-id="101">@Cordelia Lear</span></p>'},
+        {input: '@**Mark Twin|104** and @**Mark Twin|105** are out to confuse you.',
+         expected:'<p><span class="user-mention" data-user-id="104">@Mark Twin</span> and <span class="user-mention" data-user-id="105">@Mark Twin</span> are out to confuse you.</p>'},
+        {input: '@**Invalid User|1234**',
+         expected: '<p>@**Invalid User|1234**</p>'},
+        {input: '@**Cordelia Lear|103** has a wrong user_id.',
+         expected: '<p>@**Cordelia Lear|103** has a wrong user_id.</p>'},
+        {input: '@**Brother of Bobby|123** is really the full name.',
+         expected: '<p><span class="user-mention" data-user-id="106">@Brother of Bobby|123</span> is really the full name.</p>'},
+        {input: '@**Brother of Bobby|123|106**',
+         expected: '<p><span class="user-mention" data-user-id="106">@Brother of Bobby|123</span></p>'},
         {input: 'T\n@hamletcharacters',
          expected: '<p>T<br>\n@hamletcharacters</p>'},
         {input: 'T\n@*hamletcharacters*',
          expected: '<p>T<br>\n<span class="user-group-mention" data-user-group-id="1">@hamletcharacters</span></p>'},
         {input: 'T\n@*notagroup*',
          expected: '<p>T<br>\n@*notagroup*</p>'},
-       {input: 'T\n@*backend*',
+        {input: 'T\n@*backend*',
          expected: '<p>T<br>\n<span class="user-group-mention" data-user-group-id="2">@Backend</span></p>'},
         {input: '@*notagroup*',
          expected: '<p>@*notagroup*</p>'},
@@ -303,8 +349,25 @@ var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver
         {input: ':)',
          expected: '<p>:)</p>'},
         {input: ':)',
-         expected: '<p><span class="emoji emoji-1f603" title="smiley">:smiley:</span></p>',
+         expected: '<p><span class="emoji emoji-1f642" title="slight smile">:slight_smile:</span></p>',
          translate_emoticons: true},
+        // Test HTML Escape in Custom Zulip Rules
+        {input: '@**<h1>The Rogue One</h1>**',
+         expected: '<p>@**&lt;h1&gt;The Rogue One&lt;/h1&gt;**</p>'},
+        {input: '#**<h1>The Rogue One</h1>**',
+         expected: '<p>#**&lt;h1&gt;The Rogue One&lt;/h1&gt;**</p>'},
+        {input: '!avatar(<h1>The Rogue One</h1>)',
+         expected: '<p><img alt="&lt;h1&gt;The Rogue One&lt;/h1&gt;" class="message_body_gravatar" src="/avatar/&lt;h1&gt;The Rogue One&lt;/h1&gt;?s=30" title="&lt;h1&gt;The Rogue One&lt;/h1&gt;"></p>'},
+        {input: ':<h1>The Rogue One</h1>:',
+         expected: '<p>:&lt;h1&gt;The Rogue One&lt;/h1&gt;:</p>'},
+        {input: '@**O\'Connell**',
+         expected: '<p>@**O&#39;Connell**</p>'},
+        {input: '@*Bobby <h1>Tables</h1>*',
+         expected: '<p><span class="user-group-mention" data-user-group-id="3">@Bobby &lt;h1&gt;Tables&lt;/h1&gt;</span></p>'},
+        {input: '@**Bobby <h1>Tables</h1>**',
+         expected: '<p><span class="user-mention" data-user-id="103">@Bobby &lt;h1&gt;Tables&lt;/h1&gt;</span></p>'},
+        {input: '#**Bobby <h1>Tables</h1>**',
+         expected: '<p><a class="stream" data-stream-id="3" href="http://zulip.zulipdev.com/#narrow/stream/3-Bobby-.3Ch1.3ETables.3C.2Fh1.3E">#Bobby &lt;h1&gt;Tables&lt;/h1&gt;</a></p>'},
     ];
 
     // We remove one of the unicode emoji we put as input in one of the test
@@ -322,12 +385,11 @@ var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver
         var message = {raw_content: input};
         markdown.apply_markdown(message);
         var output = message.content;
-
         assert.equal(expected, output);
     });
-}());
+});
 
-(function test_subject_links() {
+run_test('subject_links', () => {
     var message = {type: 'stream', subject: "No links here"};
     markdown.add_subject_links(message);
     assert.equal(message.subject_links.length, []);
@@ -362,9 +424,9 @@ var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver
     message = {type: "not-stream"};
     markdown.add_subject_links(message);
     assert.equal(message.subject_links.length, 0);
-}());
+});
 
-(function test_message_flags() {
+run_test('message_flags', () => {
     var input = "/me is testing this";
     var message = {subject: "No links here", raw_content: input};
     markdown.apply_markdown(message);
@@ -385,6 +447,20 @@ var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver
     assert.equal(message.is_me_message, false);
     assert.equal(message.mentioned, true);
     assert.equal(message.mentioned_me_directly, true);
+
+    input = "test @**everyone**";
+    message = {subject: "No links here", raw_content: input};
+    markdown.apply_markdown(message);
+    assert.equal(message.is_me_message, false);
+    assert.equal(message.mentioned, true);
+    assert.equal(message.mentioned_me_directly, false);
+
+    input = "test @**stream**";
+    message = {subject: "No links here", raw_content: input};
+    markdown.apply_markdown(message);
+    assert.equal(message.is_me_message, false);
+    assert.equal(message.mentioned, true);
+    assert.equal(message.mentioned_me_directly, false);
 
     input = "test @all";
     message = {subject: "No links here", raw_content: input};
@@ -420,9 +496,9 @@ var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver
     message = {subject: "No links here", raw_content: input};
     markdown.apply_markdown(message);
     assert.equal(message.mentioned, false);
-}());
+});
 
-(function test_backend_only_realm_filters() {
+run_test('backend_only_realm_filters', () => {
     var backend_only_realm_filters = [
         'Here is the PR-#123.',
         'Function abc() was introduced in (PR)#123.',
@@ -430,25 +506,22 @@ var bugdown_data = JSON.parse(fs.readFileSync(path.join(__dirname, '../../zerver
     backend_only_realm_filters.forEach(function (content) {
         assert.equal(markdown.contains_backend_only_syntax(content), true);
     });
-}());
+});
 
-(function test_python_to_js_filter() {
+run_test('python_to_js_filter', () => {
     // The only way to reach python_to_js_filter is indirectly, hence the call
     // to set_realm_filters.
     markdown.set_realm_filters([['/a(?im)a/g'], ['/a(?L)a/g']]);
-    var actual_value = (marked.InlineLexer.rules.zulip.realm_filters);
+    var actual_value = marked.InlineLexer.rules.zulip.realm_filters;
     var expected_value = [/\/aa\/g(?![\w])/gim, /\/aa\/g(?![\w])/g];
     assert.deepEqual(actual_value, expected_value);
-}());
+});
 
-(function test_katex_throws_unexpected_exceptions() {
+run_test('katex_throws_unexpected_exceptions', () => {
     katex.renderToString = function () { throw new Error('some-exception'); };
-    var blueslip_error_called = false;
-    blueslip.error = function (ex) {
-        assert.equal(ex.message, 'some-exception');
-        blueslip_error_called = true;
-    };
+    blueslip.set_test_data('error', 'Error: some-exception');
     var message = { raw_content: '$$a$$' };
     markdown.apply_markdown(message);
-    assert(blueslip_error_called);
-}());
+    assert(blueslip.get_test_logs('error').length, 1);
+    blueslip.clear_test_data();
+});

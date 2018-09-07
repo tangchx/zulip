@@ -30,16 +30,18 @@ On this page you'll find:
 
 2. `cd python-zulip-api` - navigate into your cloned repository.
 
-3. `./tools/provision` - install all requirements in a Python virtualenv.
+3. `python3 ./tools/provision` - install all requirements in a Python virtualenv.
 
-4. Run the `source <activation/path>` command printed in the previous
-   step to activate the virtualenv.
+4. The output of `provision` will end with a command of the form `source .../activate`;
+   run that command to enter the new virtualenv.
 
-5. *Finished*. You should now see the name of your venv preceding your prompt, e.g. `(ZULIP-~1)`.
+5. *Finished*. You should now see the name of your venv preceding your prompt,
+   e.g. `(zulip-api-py3-venv)`.
 
-*Hint: `./tools/provision` installs `zulip`, `zulip_bots`, and
- `zulip_botserver` in developer mode. This enables you to make changes
- to the code after the packages are installed.*
+*Hint: `provision` installs the `zulip`, `zulip_bots`, and
+ `zulip_botserver` packages in developer mode. This enables you to
+ make modify these packages and then run your modified code without
+ having to first re-install the packages or re-provision.*
 
 ## Writing a bot
 
@@ -496,7 +498,7 @@ to see examples of bot tests.
 
 * My bot won't start
     * Ensure that your API config file is correct (download the config file from the server).
-    * Ensure that you bot script is located in zulip_bots/bots/<my-bot>/
+    * Ensure that you bot script is located in `zulip_bots/bots/<my-bot>/`
     * Are you using your own Zulip development server? Ensure that you run your bot outside
       the Vagrant environment.
     * Some bots require Python 3. Try switching to a Python 3 environment before running

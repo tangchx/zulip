@@ -1,4 +1,3 @@
-import fuzzysearch from 'fuzzysearch';
 import blueslip from './../blueslip';
 
 import { path_parts } from './landing-page';
@@ -47,7 +46,7 @@ function adjust_font_sizing() {
         if ($integration_name.height() > 30) {
             $integration_name.css('font-size', '1em');
             if ($integration_name.height() > 30) {
-                 $integration_name.css('font-size', '.95em');
+                $integration_name.css('font-size', '.95em');
             }
         }
 
@@ -88,8 +87,8 @@ function update_categories() {
     } else {
         $dropdown_label.text(CATEGORIES[state.category]);
         $dropdown_icon
-            .removeClass('icon-vector-angle-right')
-            .addClass('icon-vector-angle-down');
+            .removeClass('fa-angle-right')
+            .addClass('fa-angle-down');
     }
 
     $('.integration-lozenges').animate(
@@ -117,8 +116,9 @@ var update_integrations = _.debounce(function () {
         }
 
         if (!$integration.hasClass('integration-create-your-own')) {
+            var display_name = INTEGRATIONS[$integration.data('name')];
             var display =
-                fuzzysearch(state.query, $integration.data('name').toLowerCase()) &&
+                common.phrase_match(state.query, display_name) &&
                 ($integration.data('categories').indexOf(CATEGORIES[state.category]) !== -1 ||
                  state.category === 'all');
 
@@ -195,6 +195,7 @@ function hide_catalog_show_integration() {
         $(".extra, #integration-main-text, #integration-search").css("display", "none");
 
         show_integration(doc);
+        $(".main").css("visibility", "visible");
     }
 
     $.get({
@@ -249,68 +250,72 @@ function render(next_state) {
     var previous_state = Object.assign({}, state);
     state = next_state;
 
-    if (previous_state.integration !== next_state.integration) {
-        if (next_state.integration !== null) {
-            hide_catalog_show_integration();
-        } else {
+    if (previous_state.integration !== next_state.integration &&
+        next_state.integration !== null) {
+        hide_catalog_show_integration();
+    } else {
+        if (previous_state.integration !== next_state.integration) {
             hide_integration_show_catalog();
         }
+
+        if (previous_state.category !== next_state.category) {
+            update_categories();
+            update_integrations();
+        }
+
+        if (previous_state.query !== next_state.query) {
+            update_integrations();
+        }
+
+        $(".main").css("visibility", "visible");
     }
 
-    if (previous_state.category !== next_state.category) {
-        update_categories();
-        update_integrations();
-    }
-
-    if (previous_state.query !== next_state.query) {
-        update_integrations();
-    }
 }
 
 function dispatch(action, payload) {
     switch (action) {
-        case 'CHANGE_CATEGORY':
-            render(Object.assign({}, state, {
-                category: payload.category,
-            }));
-            update_path();
-            break;
+    case 'CHANGE_CATEGORY':
+        render(Object.assign({}, state, {
+            category: payload.category,
+        }));
+        update_path();
+        break;
 
-        case 'SHOW_INTEGRATION':
-            render(Object.assign({}, state, {
-                integration: payload.integration,
-            }));
-            update_path();
-            break;
+    case 'SHOW_INTEGRATION':
+        render(Object.assign({}, state, {
+            integration: payload.integration,
+        }));
+        update_path();
+        break;
 
-        case 'HIDE_INTEGRATION':
-            render(Object.assign({}, state, {
-                integration: null,
-            }));
-            update_path();
-            break;
+    case 'HIDE_INTEGRATION':
+        render(Object.assign({}, state, {
+            integration: null,
+        }));
+        update_path();
+        break;
 
-        case 'SHOW_CATEGORY':
-            render(Object.assign({}, state, {
-                integration: null,
-                category: payload.category,
-            }));
-            update_path();
-            break;
+    case 'SHOW_CATEGORY':
+        render(Object.assign({}, state, {
+            integration: null,
+            category: payload.category,
+        }));
+        update_path();
+        break;
 
-        case 'UPDATE_QUERY':
-            render(Object.assign({}, state, {
-                query: payload.query,
-            }));
-            break;
+    case 'UPDATE_QUERY':
+        render(Object.assign({}, state, {
+            query: payload.query,
+        }));
+        break;
 
-        case 'LOAD_PATH':
-            render(get_state_from_path());
-            break;
+    case 'LOAD_PATH':
+        render(get_state_from_path());
+        break;
 
-        default:
-            blueslip.error('Invalid action dispatched on /integrations.');
-            break;
+    default:
+        blueslip.error('Invalid action dispatched on /integrations.');
+        break;
     }
 }
 
@@ -336,12 +341,12 @@ function integration_events() {
         if ($dropdown_list.css('display') === 'none' &&
             state.category === INITIAL_STATE.category) {
             $('.integration-categories-dropdown i')
-                .removeClass('icon-vector-angle-down')
-                .addClass('icon-vector-angle-right');
+                .removeClass('fa-angle-down')
+                .addClass('fa-angle-right');
         } else {
             $('.integration-categories-dropdown i')
-                .removeClass('icon-vector-angle-right')
-                .addClass('icon-vector-angle-down');
+                .removeClass('fa-angle-right')
+                .addClass('fa-angle-down');
         }
     });
 
@@ -382,7 +387,7 @@ function integration_events() {
         if (document.body.scrollTop > 330) {
             $('.integration-categories-sidebar').addClass('sticky');
         } else {
-             $('.integration-categories-sidebar').removeClass('sticky');
+            $('.integration-categories-sidebar').removeClass('sticky');
         }
     });
 

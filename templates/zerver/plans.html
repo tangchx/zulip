@@ -2,10 +2,7 @@
 
 {% block customhead %}
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-{% stylesheet 'portico' %}
-{% stylesheet 'landing-page' %}
 {{ render_bundle('landing-page') }}
-
 {% endblock %}
 
 {% block portico_content %}
@@ -21,7 +18,7 @@
 
                 <div class="pricing-container">
                     <div class="block">
-                        <div class="plan-title zulip-cloud">
+                        <div class="plan-title responsive-title">
                             Zulip Cloud
                         </div>
 
@@ -41,6 +38,7 @@
                             </div>
                             <div class="bottom">
                                 <div class="text-content">
+                                    {% if realm_plan_type == 0 %}
                                     <div class="pricing-details">
                                         Free
                                     </div>
@@ -49,6 +47,12 @@
                                             Sign up now
                                         </button>
                                     </a>
+                                    {% elif realm_plan_type == 2 %}
+                                    <div class="pricing-details"></div>
+                                    <button class="black-disabled" type="button">
+                                        Current plan
+                                    </button>
+                                    {% endif %}
                                 </div>
                             </div>
                         </div>
@@ -71,26 +75,38 @@
                             </div>
                             <div class="bottom">
                                 <div class="text-content">
-                                    <div class="">
-                                        <div class="price">8</div>
+                                    <div class="premium-price-box">
+                                        <div class="price">6<span class="price-cents">.67</span></div>
                                         <div class="details">
-                                            per active user, per month
+                                            per active user per month
                                             <br />
-                                            $80/year billed annually
+                                            $8/month billed monthly
                                         </div>
                                     </div>
-                                    <a href="/new/">
+                                    {% if realm_plan_type in [3, 4] %}
+                                    <button class="black-disabled" type="button">
+                                        Current plan
+                                    </button>
+                                    {% elif realm_plan_type == 2 %}
+                                    <a href="/upgrade">
                                         <button class="green" type="button">
-                                            Try it free
+                                            Buy Premium
                                         </button>
                                     </a>
+                                    {% else %}
+                                    <a href="/new">
+                                        <button class="green" type="button">
+                                            Buy Premium
+                                        </button>
+                                    </a>
+                                    {% endif %}
                                 </div>
                             </div>
                         </div>
                     </div>
 
                     <div class="block">
-                        <div class="plan-title">
+                        <div class="plan-title responsive-title">
                             Zulip On-Premise
                         </div>
 
@@ -113,7 +129,7 @@
                                     <div class="pricing-details">
                                         Free and open source forever
                                     </div>
-                                    <a href="https://zulip.readthedocs.io/en/1.7.1/prod.html">
+                                    <a href="https://zulip.readthedocs.io/en/stable/prod.html">
                                         <button class="green" type="button">
                                             Install a Zulip server
                                         </button>

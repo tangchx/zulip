@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, Iterable, List, Set, Tuple, Text
+from typing import Any, Callable, Dict, Iterable, List, Set, Tuple
 
 from collections import defaultdict
 import datetime
@@ -10,9 +10,9 @@ from django.template import loader
 from django.conf import settings
 from django.utils.timezone import now as timezone_now
 
-from zerver.lib.notifications import build_message_list, encode_stream, \
-    one_click_unsubscribe_link
+from zerver.lib.notifications import build_message_list, one_click_unsubscribe_link
 from zerver.lib.send_email import send_future_email, FromAddress
+from zerver.lib.url_encoding import encode_stream
 from zerver.models import UserProfile, UserMessage, Recipient, Stream, \
     Subscription, UserActivity, get_active_streams, get_user_profile_by_id, \
     Realm
@@ -67,7 +67,7 @@ def enqueue_emails(cutoff: datetime.datetime) -> None:
     if timezone_now().weekday() != VALID_DIGEST_DAY:
         return
 
-    for realm in Realm.objects.filter(deactivated=False, show_digest_email=True):
+    for realm in Realm.objects.filter(deactivated=False, digest_emails_enabled=True):
         if not should_process_digest(realm.string_id):
             continue
 
@@ -88,8 +88,8 @@ def gather_hot_conversations(user_profile: UserProfile, stream_messages: QuerySe
     # Returns a list of dictionaries containing the templating
     # information for each hot conversation.
 
-    conversation_length = defaultdict(int)  # type: Dict[Tuple[int, Text], int]
-    conversation_diversity = defaultdict(set)  # type: Dict[Tuple[int, Text], Set[Text]]
+    conversation_length = defaultdict(int)  # type: Dict[Tuple[int, str], int]
+    conversation_diversity = defaultdict(set)  # type: Dict[Tuple[int, str], Set[str]]
     for user_message in stream_messages:
         if not user_message.message.sent_by_human():
             # Don't include automated messages in the count.
@@ -143,10 +143,10 @@ def gather_hot_conversations(user_profile: UserProfile, stream_messages: QuerySe
         hot_conversation_render_payloads.append(teaser_data)
     return hot_conversation_render_payloads
 
-def gather_new_users(user_profile: UserProfile, threshold: datetime.datetime) -> Tuple[int, List[Text]]:
+def gather_new_users(user_profile: UserProfile, threshold: datetime.datetime) -> Tuple[int, List[str]]:
     # Gather information on users in the realm who have recently
     # joined.
-    if user_profile.realm.is_zephyr_mirror_realm:
+    if not user_profile.can_access_all_realm_members():
         new_users = []  # type: List[UserProfile]
     else:
         new_users = list(UserProfile.objects.filter(
@@ -157,12 +157,12 @@ def gather_new_users(user_profile: UserProfile, threshold: datetime.datetime) ->
     return len(user_names), user_names
 
 def gather_new_streams(user_profile: UserProfile,
-                       threshold: datetime.datetime) -> Tuple[int, Dict[str, List[Text]]]:
-    if user_profile.realm.is_zephyr_mirror_realm:
-        new_streams = []  # type: List[Stream]
-    else:
+                       threshold: datetime.datetime) -> Tuple[int, Dict[str, List[str]]]:
+    if user_profile.can_access_public_streams():
         new_streams = list(get_active_streams(user_profile.realm).filter(
             invite_only=False, date_created__gt=threshold))
+    else:
+        new_streams = []
 
     base_url = "%s/#narrow/stream/" % (user_profile.realm.uri,)
 
@@ -177,7 +177,7 @@ def gather_new_streams(user_profile: UserProfile,
 
     return len(new_streams), {"html": streams_html, "plain": streams_plain}
 
-def enough_traffic(unread_pms: Text, hot_conversations: Text, new_streams: int, new_users: int) -> bool:
+def enough_traffic(unread_pms: str, hot_conversations: str, new_streams: int, new_users: int) -> bool:
     if unread_pms or hot_conversations:
         # If you have any unread traffic, good enough.
         return True

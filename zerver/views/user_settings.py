@@ -1,4 +1,4 @@
-from typing import Optional, Any, Dict, Text
+from typing import Optional, Any, Dict
 
 from django.utils.translation import ugettext as _
 from django.conf import settings
@@ -10,8 +10,7 @@ from django.urls import reverse
 from zerver.decorator import has_request_variables, \
     zulip_login_required, REQ, human_users_only
 from zerver.lib.actions import do_change_password, do_change_notification_settings, \
-    do_change_enter_sends, do_change_default_desktop_notifications, \
-    do_regenerate_api_key, do_change_avatar_fields, \
+    do_change_enter_sends, do_regenerate_api_key, do_change_avatar_fields, \
     do_set_user_display_setting, validate_email, do_change_user_email, \
     do_start_email_change_process, check_change_full_name
 from zerver.lib.avatar import avatar_url
@@ -26,6 +25,7 @@ from zerver.models import UserProfile, Realm, name_changes_disabled, \
     EmailChangeStatus
 from confirmation.models import get_object_from_key, render_confirmation_key_error, \
     ConfirmationKeyException, Confirmation
+from zproject.backends import email_belongs_to_ldap
 
 def confirm_email_change(request: HttpRequest, confirmation_key: str) -> HttpResponse:
     try:
@@ -41,7 +41,7 @@ def confirm_email_change(request: HttpRequest, confirmation_key: str) -> HttpRes
         raise JsonableError(_("Email address changes are disabled in this organization."))
     do_change_user_email(user_profile, new_email)
 
-    context = {'realm': user_profile.realm, 'new_email': new_email}
+    context = {'realm_name': user_profile.realm.name, 'new_email': new_email}
     send_email('zerver/emails/notify_change_in_email', to_email=old_email,
                from_name="Zulip Account Security", from_address=FromAddress.SUPPORT,
                context=context)
@@ -54,32 +54,20 @@ def confirm_email_change(request: HttpRequest, confirmation_key: str) -> HttpRes
 
 @human_users_only
 @has_request_variables
-def json_change_ui_settings(
-        request: HttpRequest, user_profile: UserProfile,
-        default_desktop_notifications: Optional[bool]=REQ(validator=check_bool, default=None)
-) -> HttpResponse:
-    result = {}
-
-    if default_desktop_notifications is not None and \
-            user_profile.default_desktop_notifications != default_desktop_notifications:
-        do_change_default_desktop_notifications(user_profile, default_desktop_notifications)
-        result['default_desktop_notifications'] = default_desktop_notifications
-
-    return json_success(result)
-
-@human_users_only
-@has_request_variables
 def json_change_settings(request: HttpRequest, user_profile: UserProfile,
-                         full_name: Text=REQ(default=""),
-                         email: Text=REQ(default=""),
-                         old_password: Text=REQ(default=""),
-                         new_password: Text=REQ(default="")) -> HttpResponse:
+                         full_name: str=REQ(default=""),
+                         email: str=REQ(default=""),
+                         old_password: str=REQ(default=""),
+                         new_password: str=REQ(default="")) -> HttpResponse:
     if not (full_name or new_password or email):
         return json_error(_("Please fill out all fields."))
 
     if new_password != "":
+        return_data = {}  # type: Dict[str, Any]
+        if email_belongs_to_ldap(user_profile.realm, user_profile.email):
+            return json_error(_("Your Zulip password is managed in LDAP"))
         if not authenticate(username=user_profile.email, password=old_password,
-                            realm=user_profile.realm):
+                            realm=user_profile.realm, return_data=return_data):
             return json_error(_("Wrong password!"))
         do_change_password(user_profile, new_password)
         # In Django 1.10, password changes invalidates sessions, see
@@ -127,6 +115,8 @@ def json_change_settings(request: HttpRequest, user_profile: UserProfile,
 def update_display_settings_backend(
         request: HttpRequest, user_profile: UserProfile,
         twenty_four_hour_time: Optional[bool]=REQ(validator=check_bool, default=None),
+        dense_mode: Optional[bool]=REQ(validator=check_bool, default=None),
+        starred_message_counts: Optional[bool]=REQ(validator=check_bool, default=None),
         high_contrast_mode: Optional[bool]=REQ(validator=check_bool, default=None),
         night_mode: Optional[bool]=REQ(validator=check_bool, default=None),
         translate_emoticons: Optional[bool]=REQ(validator=check_bool, default=None),
@@ -170,6 +160,7 @@ def json_change_notify_settings(
         enable_offline_push_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
         enable_online_push_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
         enable_digest_emails: Optional[bool]=REQ(validator=check_bool, default=None),
+        enable_login_emails: Optional[bool]=REQ(validator=check_bool, default=None),
         message_content_in_email_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
         pm_content_in_desktop_notifications: Optional[bool]=REQ(validator=check_bool, default=None),
         realm_name_in_notifications: Optional[bool]=REQ(validator=check_bool, default=None)

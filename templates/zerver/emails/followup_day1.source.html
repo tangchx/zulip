@@ -5,40 +5,63 @@
 {% endblock %}
 
 {% block content %}
-<p>Hi there,</p>
+<p>{{ _('Hi there,') }}</p>
 
-<p>Welcome to Zulip!</p>
+<p>{{ _('Welcome to Zulip! A few tips to get you started:') }}</p>
 <p>
-    Zulip is the team communication solution that combines the real-time
-    ease of chat with the threaded organization of email. At its core, Zulip
-    is about productivity&mdash;making communication fun and easy, while
-    avoiding the distracting and disorganized conversations of chatrooms.
-</p>
-
-<p>
-    We hope you love using Zulip as much as we do. Zulip works best when
-    it's always open, so we suggest pinning a browser tab or downloading
+    &bull;
+    {% trans %}
+    Zulip works best when it's always open, so we suggest downloading
     our <a href="https://zulipchat.com/apps">desktop and mobile apps</a>.
-    If you're new to Zulip's threading, we recommend starting with the
-    desktop or browser experience, and using mobile for notifications on the
-    go.
-    {% if is_realm_admin %}
-    If this is your first Zulip organization, we also recommend giving
-    our <a href="{{ organization_setup_advice_link }}">guide for new
-    admins</a> a spin.
-    {% endif %}
+    {% endtrans %}
+    <br/><br/>
+    {% trans %}
+    To access your account from the apps, enter this Organization URL:
+    {% endtrans %}
 </p>
 
 <p>
-    If you have any feedback, or want to see how we use Zulip for managing
-    the Zulip project itself, swing by
-    <a href="chat.zulip.org">chat.zulip.org</a> and say hi!
+    &nbsp;&nbsp;&nbsp;&nbsp;<b>{{ realm_uri }}</b>
+</p>
+<p>
+    &bull;
+    {% trans %}
+    Become a Zulip pro with a few
+    <a href="{{ keyboard_shortcuts_link }}">keyboard shortcuts</a>:
+    {% endtrans %}
+    <br/>
+    <b>n</b>: {{ _('Next unread thread') }}<br/>
+    <b>r</b>: {{ _('Reply to message under the blue box') }}<br/>
+    <b>c</b>: {{ _('Start a new topic') }}
+</p>
+<p>
+    &bull;
+    {% trans %}
+    Give our <a href="{{ getting_started_link }}">guide for new
+    {{ user_role_group }}</a> a spin.
+    {% endtrans %}
+</p>
+<p>
+    <br/>
+    {% trans %}
+    Zulip combines the real-time ease of chat with the threaded organization
+    of email. Zulip is about productivity&mdash;making communication fun and
+    easy, while avoiding the distracting and disorganized conversations of
+    chatrooms. We hope you love using Zulip as much as we do.
+    {% endtrans %}
 </p>
 
-<p>Cheers,<br/>Team Zulip</p>
+<p>
+    {{ _("Cheers,") }}<br />
+    {{ _("Team Zulip") }}
+</p>
 
 <p>
-    PS: Check us out on <a href="https://twitter.com/zulip">Twitter</a>
-    or star us on <a href="https://github.com/zulip/zulip">GitHub</a>!
+    {% trans %}
+    PS: Follow us on <a href="https://twitter.com/zulip">Twitter</a>,
+    star us on <a href="https://github.com/zulip/zulip">GitHub</a>, or
+    chat with us live on the
+    <a href="https://chat.zulip.org">Zulip community server</a>!
+    {% endtrans %}
 </p>
 {% endblock %}

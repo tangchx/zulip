@@ -12,9 +12,10 @@ import logging
 import ujson
 
 import os
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Text
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from zerver.lib.logging_util import log_to_file
+from confirmation.models import generate_key
 
 ## Logging setup ##
 
@@ -25,9 +26,16 @@ class FromAddress:
     SUPPORT = parseaddr(settings.ZULIP_ADMINISTRATOR)[1]
     NOREPLY = parseaddr(settings.NOREPLY_EMAIL_ADDRESS)[1]
 
+    # Generates an unpredictable noreply address.
+    @staticmethod
+    def tokenized_no_reply_address() -> str:
+        if settings.ADD_TOKENS_TO_NOREPLY_ADDRESS:
+            return parseaddr(settings.TOKENIZED_NOREPLY_EMAIL_ADDRESS)[1].format(token=generate_key())
+        return FromAddress.NOREPLY
+
 def build_email(template_prefix: str, to_user_id: Optional[int]=None,
-                to_email: Optional[Text]=None, from_name: Optional[Text]=None,
-                from_address: Optional[Text]=None, reply_to_email: Optional[Text]=None,
+                to_email: Optional[str]=None, from_name: Optional[str]=None,
+                from_address: Optional[str]=None, reply_to_email: Optional[str]=None,
                 context: Optional[Dict[str, Any]]=None) -> EmailMultiAlternatives:
     # Callers should pass exactly one of to_user_id and to_email.
     assert (to_user_id is None) ^ (to_email is None)
@@ -35,7 +43,7 @@ def build_email(template_prefix: str, to_user_id: Optional[int]=None,
         to_user = get_user_profile_by_id(to_user_id)
         # Change to formataddr((to_user.full_name, to_user.email)) once
         # https://github.com/zulip/zulip/issues/4676 is resolved
-        to_email = to_user.email
+        to_email = to_user.delivery_email
 
     if context is None:
         context = {}
@@ -83,9 +91,9 @@ class EmailNotDeliveredException(Exception):
 
 # When changing the arguments to this function, you may need to write a
 # migration to change or remove any emails in ScheduledEmail.
-def send_email(template_prefix: str, to_user_id: Optional[int]=None, to_email: Optional[Text]=None,
-               from_name: Optional[Text]=None, from_address: Optional[Text]=None,
-               reply_to_email: Optional[Text]=None, context: Dict[str, Any]={}) -> None:
+def send_email(template_prefix: str, to_user_id: Optional[int]=None, to_email: Optional[str]=None,
+               from_name: Optional[str]=None, from_address: Optional[str]=None,
+               reply_to_email: Optional[str]=None, context: Dict[str, Any]={}) -> None:
     mail = build_email(template_prefix, to_user_id=to_user_id, to_email=to_email, from_name=from_name,
                        from_address=from_address, reply_to_email=reply_to_email, context=context)
     template = template_prefix.split("/")[-1]
@@ -99,8 +107,8 @@ def send_email_from_dict(email_dict: Mapping[str, Any]) -> None:
     send_email(**dict(email_dict))
 
 def send_future_email(template_prefix: str, realm: Realm, to_user_id: Optional[int]=None,
-                      to_email: Optional[Text]=None, from_name: Optional[Text]=None,
-                      from_address: Optional[Text]=None, context: Dict[str, Any]={},
+                      to_email: Optional[str]=None, from_name: Optional[str]=None,
+                      from_address: Optional[str]=None, context: Dict[str, Any]={},
                       delay: datetime.timedelta=datetime.timedelta(0)) -> None:
     template_name = template_prefix.split('/')[-1]
     email_fields = {'template_prefix': template_prefix, 'to_user_id': to_user_id, 'to_email': to_email,

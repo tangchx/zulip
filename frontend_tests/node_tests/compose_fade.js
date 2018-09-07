@@ -1,5 +1,3 @@
-set_global('$', function () {
-});
 set_global('blueslip', {});
 global.blueslip.warn = function () {};
 
@@ -26,14 +24,14 @@ var bob = {
     full_name: 'Bob',
 };
 
-people.add(me);
+people.add_in_realm(me);
 people.initialize_current_user(me.user_id);
 
-people.add(alice);
-people.add(bob);
+people.add_in_realm(alice);
+people.add_in_realm(bob);
 
 
-(function test_set_focused_recipient() {
+run_test('set_focused_recipient', () => {
     var sub = {
         stream_id: 101,
         name: 'social',
@@ -62,9 +60,10 @@ people.add(bob);
 
     compose_fade.set_focused_recipient('stream');
 
-    assert(compose_fade.would_receive_message('me@example.com'));
-    assert(compose_fade.would_receive_message('alice@example.com'));
-    assert(!compose_fade.would_receive_message('bob@example.com'));
+    assert.equal(compose_fade.would_receive_message('me@example.com'), true);
+    assert.equal(compose_fade.would_receive_message('alice@example.com'), true);
+    assert.equal(compose_fade.would_receive_message('bob@example.com'), false);
+    assert.equal(compose_fade.would_receive_message('nonrealmuser@example.com'), true);
 
     var good_msg = {
         type: 'stream',
@@ -78,4 +77,4 @@ people.add(bob);
     };
     assert(!compose_fade.should_fade_message(good_msg));
     assert(compose_fade.should_fade_message(bad_msg));
-}());
+});

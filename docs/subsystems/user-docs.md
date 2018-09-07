@@ -192,13 +192,12 @@ a new line to be formatted this way.
 
 ### Icons
 
-You can refer to features in the Zulip UI by referencing their names and
-their [FontAwesome](http://fontawesome.io) (version 4.7.0) text icons within
-parentheses. The source for the text icons is located in
-`static/third/thirdparty-fonts.css`. **Note:** It is strongly recommended to use
-the new base class `fa` instead of the older base class `icon-vector` when
-specifying icons. In future we will be removing support for the icons with base
-class `icon-vector`.
+You can refer to features in the Zulip UI by referencing their names
+and their [FontAwesome](http://fontawesome.io) (version 4.7.0) text
+icons within parentheses. **Note:** We are migrating to the modern
+font awesome base class `fa` instead of the older base class
+`icon-vector` when specifying icons. In future we will be removing
+support for the icons with base class `icon-vector`.
 
 * cog (<i class="fa fa-cog"></i>) icon — `cog (<i
 class="fa fa-cog"></i>) icon`
@@ -247,27 +246,6 @@ The source for macros is the Markdown files under
 multiple instances of particular content in the documentation, you can
 always create a new macro by adding a new file to that folder.
 
-### **Organization settings** `{!admin.md!}` macro
-
-* **About:** Links to the **Organization settings** documentation.
-Usually preceded by the [**Go to the** macro](#go-to-the-go-to-the-md-macro)
-and a link to a particular section on the **Organization settings** page.
-
-* **Contents:**
-    ```md
-    tab of the [Organization settings](/help/edit-administrator-settings) page.
-    ```
-
-* **Example usage and rendering:**
-    ```md
-    {!go-to-the.md!} [Organization settings](/#organization/organization-settings)
-    {!admin.md!}
-    ```
-    ```md
-    1. Go to the [Organization settings](/#organization/organization-settings) tab of the
-    [Organization](/help/edit-administrator-settings) page.
-    ```
-
 ### **Administrator only feature** `{!admin-only.md!}` macro
 
 * **About:** Creates a note the feature discussed in the documentation is
@@ -284,7 +262,7 @@ immediately after the title.
     ```md
     {!admin-only.md!}
 
-    {!follow-steps.md!} change who can join your stream by changing the stream's
+    Follow the following steps to change who can join your stream by changing the stream's
     accessibility.
     ```
     ```md
@@ -348,27 +326,6 @@ macro](#message-actions-message-actions-md-macro).
     down chevron (<i class="fa fa-chevron-down"></i>) icon to reveal an actions dropdown.
     ```
 
-### **Go to the** `{!go-to-the.md}` macro
-
-* **About:** Usually precedes the [**Settings** macro](#settings-settings-md-macro)
-or the [**Organization settings** macro](#organization-settings-admin-md-macro). Transforms
-following content into a step.
-
-* **Contents:**
-    ```md
-    1. Go to the
-    ```
-
-* **Example usage and rendering:**
-    ```md
-    {!go-to-the.md!} [Notifications](/#settings/notifications)
-    {!settings.md!}
-    ```
-    ```md
-    1. Go to the [Notifications](/#settings/notifications) tab on the
-    [Settings](/help/edit-settings) page.
-    ```
-
 ### **Filter streams** `{!filter-streams.md!}` macro
 
 * **About:** Explains how to search for specific streams in the
@@ -392,24 +349,6 @@ following content into a step.
     name of the stream in the **Filter streams** input.
     ```
 
-### **Follow steps** `{!follow-steps.md!}` macro
-
-* **About:** Prepends phrases with instructions to follow the following steps.
-
-* **Contents:**
-    ```md
-    Follow the following steps to
-    ```
-
-* **Example usage and rendering:**
-    ```md
-    {!follow-steps.md!}  change your mobile notification settings.
-    ```
-    ```md
-    Follow the following steps to change your mobile notification
-    settings.
-    ```
-
 ### **Message actions** `{!message-actions.md!}` macro
 
 * **About:** Explains how to view the actions of message. Usually followed by an instruction
@@ -417,8 +356,7 @@ to click a specific icon, such as the [**Down chevron** macro](#down-chevron-dow
 
 * **Contents:**
     ```md
-    1. Hover over a message to replace the message's timestamp with its message
-    actions, represented by three icons. From the icons that appear, select the
+    1. Hover over the message to reveal three icons on the right. Select the
     ```
 
 * **Example usage and rendering:**
@@ -427,8 +365,7 @@ to click a specific icon, such as the [**Down chevron** macro](#down-chevron-dow
     {!down-chevron.md!}
     ```
     ```md
-    1. Hover over a message to replace the message's timestamp with its message
-    actions, represented by three icons. From the icons that appear, select the
+    1. Hover over the message to reveal three icons on the right. Select the
     down chevron (<i class="fa fa-chevron-down"></i>) icon to reveal an actions dropdown.
     ```
 
@@ -456,8 +393,7 @@ describing the settings they modified.
 ### **Settings** `{!settings.md!}` macro
 
 * **About:** Links to the **Edit Settings** documentation. Usually preceded by
-the [**Go to the** macro](#go-to-the-go-to-the-md-macro) and a link to a
-particular section on the **Settings** page.
+a link to a particular section on the **Settings** page.
 
 * **Contents:**
     ```md
@@ -466,7 +402,7 @@ particular section on the **Settings** page.
 
 * **Example usage and rendering:**
     ```md
-    {!go-to-the.md!} [Notifications](/#settings/notifications)
+    1. Go to the [Notifications](/#settings/notifications)
     {!settings.md!}
     ```
     ```md

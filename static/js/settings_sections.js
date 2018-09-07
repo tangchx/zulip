@@ -6,7 +6,6 @@ var load_func_dict = new Dict(); // section -> function
 var is_loaded = new Dict(); // section -> bool
 
 exports.initialize = function () {
-    settings_ui.initialize();
     load_func_dict.set('your-account', settings_account.set_up);
     load_func_dict.set('display-settings', settings_display.set_up);
     load_func_dict.set('notifications', settings_notifications.set_up);
@@ -14,7 +13,6 @@ exports.initialize = function () {
     load_func_dict.set('alert-words', alert_words_ui.set_up_alert_words);
     load_func_dict.set('uploaded-files', attachments_ui.set_up_attachments);
     load_func_dict.set('muted-topics', settings_muting.set_up);
-    load_func_dict.set('zulip-labs', settings_lab.set_up);
 };
 
 exports.load_settings_section = function (section) {
@@ -46,3 +44,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = settings_sections;
 }
+window.settings_sections = settings_sections;

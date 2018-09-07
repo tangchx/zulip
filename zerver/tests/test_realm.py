@@ -4,13 +4,14 @@ import ujson
 
 from django.http import HttpResponse
 from mock import patch
-from typing import Any, Dict, List, Text, Union, Mapping
+from typing import Any, Dict, List, Union, Mapping
 
 from zerver.lib.actions import (
     do_change_is_admin,
     do_set_realm_property,
     do_deactivate_realm,
     do_deactivate_stream,
+    do_create_realm,
 )
 
 from zerver.lib.send_email import send_future_email
@@ -21,7 +22,7 @@ from zerver.models import get_realm, Realm, UserProfile, ScheduledEmail, get_str
 
 class RealmTest(ZulipTestCase):
     def assert_user_profile_cache_gets_new_name(self, user_profile: UserProfile,
-                                                new_realm_name: Text) -> None:
+                                                new_realm_name: str) -> None:
         self.assertEqual(user_profile.realm.name, new_realm_name)
 
     def test_do_set_realm_name_caching(self) -> None:
@@ -305,6 +306,40 @@ class RealmTest(ZulipTestCase):
         result = self.client_patch('/json/realm', req)
         self.assert_json_error(result, 'Invalid bot creation policy')
 
+    def test_change_video_chat_provider(self) -> None:
+        self.assertEqual(get_realm('zulip').video_chat_provider, "Jitsi")
+        email = self.example_email("iago")
+        self.login(email)
+
+        req = {"video_chat_provider": ujson.dumps("Google Hangouts")}
+        result = self.client_patch('/json/realm', req)
+        self.assert_json_error(result, "Invalid domain: Domain can't be empty.")
+
+        req = {
+            "video_chat_provider": ujson.dumps("Google Hangouts"),
+            "google_hangouts_domain": ujson.dumps("invaliddomain"),
+        }
+        result = self.client_patch('/json/realm', req)
+        self.assert_json_error(result, "Invalid domain: Domain must have at least one dot (.)")
+
+        req = {
+            "video_chat_provider": ujson.dumps("Google Hangouts"),
+            "google_hangouts_domain": ujson.dumps("zulip.com"),
+        }
+        result = self.client_patch('/json/realm', req)
+        self.assert_json_success(result)
+        self.assertEqual(get_realm('zulip').video_chat_provider, "Google Hangouts")
+
+        req = {"video_chat_provider": ujson.dumps("Jitsi")}
+        result = self.client_patch('/json/realm', req)
+        self.assert_json_success(result)
+        self.assertEqual(get_realm('zulip').video_chat_provider, "Jitsi")
+
+    def test_initial_plan_type(self) -> None:
+        with self.settings(BILLING_ENABLED=True):
+            self.assertEqual(Realm.LIMITED, do_create_realm('hosted', 'hosted').plan_type)
+        with self.settings(BILLING_ENABLED=False):
+            self.assertEqual(Realm.SELF_HOSTED, do_create_realm('onpremise', 'onpremise').plan_type)
 
 class RealmAPITest(ZulipTestCase):
 
@@ -340,6 +375,8 @@ class RealmAPITest(ZulipTestCase):
             name=[u'Zulip', u'New Name'],
             waiting_period_threshold=[10, 20],
             bot_creation_policy=[1, 2],
+            video_chat_provider=[u'Jitsi', u'Hangouts'],
+            google_hangouts_domain=[u'zulip.com', u'zulip.org'],
         )  # type: Dict[str, Any]
         vals = test_values.get(name)
         if Realm.property_types[name] is bool:
@@ -381,3 +418,18 @@ class RealmAPITest(ZulipTestCase):
         self.assertEqual(realm.allow_message_editing, False)
         self.assertEqual(realm.message_content_edit_limit_seconds, 200)
         self.assertEqual(realm.allow_community_topic_editing, False)
+
+    def test_update_realm_allow_message_deleting(self) -> None:
+        """Tests updating the realm property 'allow_message_deleting'."""
+        self.set_up_db('allow_message_deleting', True)
+        self.set_up_db('message_content_delete_limit_seconds', 0)
+        realm = self.update_with_api('allow_message_deleting', False)
+        self.assertEqual(realm.allow_message_deleting, False)
+        self.assertEqual(realm.message_content_delete_limit_seconds, 0)
+        realm = self.update_with_api('allow_message_deleting', True)
+        realm = self.update_with_api('message_content_delete_limit_seconds', 100)
+        self.assertEqual(realm.allow_message_deleting, True)
+        self.assertEqual(realm.message_content_delete_limit_seconds, 100)
+        realm = self.update_with_api('message_content_delete_limit_seconds', 600)
+        self.assertEqual(realm.allow_message_deleting, True)
+        self.assertEqual(realm.message_content_delete_limit_seconds, 600)

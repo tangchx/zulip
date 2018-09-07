@@ -2,23 +2,22 @@
 
 {!admin-only.md!}
 
-In Zulip, most stream administration is done on the subscription page.
-However, Zulip organization administrators must use the Zulip
-**[organization administration interface](/help/change-your-organization-settings)**
-to delete streams.
+Deleting a stream will immediately unsubscribe all users from the stream,
+remove the stream from search and other typeaheads, and remove the stream's
+messages from **All messages**.
 
-{!go-to-the.md!} [Delete streams](/#organization/streams-list-admin)
-{!admin.md!}
+Deleting a stream does not delete a stream's messages. Users will still be
+able to find any given message by searching for it. However, links to
+messages and topics in the stream may or may not continue to work.
 
-2. Find the stream you want to delete, and click the **Delete stream** button to
-the right of it.
+In most cases, we recommend [renaming streams](/help/rename-a-stream) rather
+than deleting them.
 
-3. Upon clicking on the **Delete stream** button, a confirmation window titled
-**Delete stream (stream name)** will appear. Click the **Yes, delete this stream**
-button to delete the stream.
+{!go-to-stream-via-all-streams.md!}
+
+1. On the right, click **Delete**.
+
+1. Click **Yes, delete this stream**.
 
 !!! warn ""
-    **Warning:** Please be aware of the consequences of deleting a stream,
-    since this operation is irreversible. Deleting a stream will immediately
-    unsubscribe all users from the stream, and the stream's content will not be
-    recoverable.
+    Deleting a stream is irreversible.

@@ -1,6 +1,6 @@
-set_global('blueslip', {});
+set_global('blueslip', global.make_zblueslip());
 
-(function test_basic() {
+run_test('basic', () => {
     var d = new Dict();
 
     assert(d.is_empty());
@@ -34,9 +34,9 @@ set_global('blueslip', {});
     var val = ['foo'];
     var res = d.set('abc', val);
     assert.equal(val, res);
-}());
+});
 
-(function test_fold_case() {
+run_test('fold_case', () => {
     var d = new Dict({fold_case: true});
 
     assert.deepEqual(d.keys(), []);
@@ -54,12 +54,10 @@ set_global('blueslip', {});
     assert.equal(d.has('foo'), false);
 
     assert.deepEqual(d.keys(), []);
-}());
+});
 
-(function test_undefined_keys() {
-    global.blueslip.error = function (msg) {
-        assert.equal(msg, "Tried to call a Dict method with an undefined key.");
-    };
+run_test('undefined_keys', () => {
+    blueslip.set_test_data('error', 'Tried to call a Dict method with an undefined key.');
 
     var d = new Dict();
 
@@ -70,9 +68,12 @@ set_global('blueslip', {});
 
     assert.equal(d.has(undefined), false);
     assert.strictEqual(d.get(undefined), undefined);
-}());
+    assert.equal(blueslip.get_test_logs('error').length, 4);
 
-(function test_restricted_keys() {
+    blueslip.clear_test_data();
+});
+
+run_test('restricted_keys', () => {
     var d = new Dict();
 
     assert.equal(d.has('__proto__'), false);
@@ -89,9 +90,9 @@ set_global('blueslip', {});
     d.set('__proto__', 'foo');
     d.set('foo', 'bar');
     assert.equal(d.get('foo'), 'bar');
-}());
+});
 
-(function test_construction() {
+run_test('construction', () => {
     var d1 = new Dict();
 
     assert.deepEqual(d1.items(), []);
@@ -124,9 +125,9 @@ set_global('blueslip', {});
         assert.equal(e2.toString(), 'TypeError: Argument is not an array');
     }
     assert(caught);
-}());
+});
 
-(function test_each() {
+run_test('each', () => {
     var d = new Dict();
     d.set('apple', 40);
     d.set('banana', 50);
@@ -143,9 +144,9 @@ set_global('blueslip', {});
 
     assert.equal(cnt, d.keys().length);
     assert.equal(unseen_keys.length, 0);
-}());
+});
 
-(function test_setdefault() {
+run_test('setdefault', () => {
     var d = new Dict();
     var val = ['foo'];
     var res = d.setdefault('foo', val);
@@ -157,9 +158,9 @@ set_global('blueslip', {});
     res = d.setdefault('foo', val2);
     assert.equal(res, val);
     assert.equal(d.get('foo'), val);
-}());
+});
 
-(function test_num_items() {
+run_test('num_items', () => {
     var d = new Dict();
     assert.equal(d.num_items(), 0);
     assert(d.is_empty());
@@ -176,9 +177,9 @@ set_global('blueslip', {});
     assert.equal(d.num_items(), 2);
     d.del('foo');
     assert.equal(d.num_items(), 1);
-}());
+});
 
-(function test_clear() {
+run_test('clear', () => {
     var d = new Dict();
 
     function populate() {
@@ -201,4 +202,4 @@ set_global('blueslip', {});
     // make sure it still works after clearing
     populate();
     assert.equal(d.num_items(), 2);
-}());
+});

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # vim:fenc=utf-8
-from typing import Any, Dict, Iterable, Optional, Text
+from typing import Any, Dict, Iterable, Optional
 
 from django.http import HttpRequest, HttpResponse
 from django.utils.translation import ugettext as _
@@ -8,13 +8,14 @@ from django.utils.translation import ugettext as _
 from zerver.decorator import api_key_only_webhook_view
 from zerver.lib.request import REQ, has_request_variables
 from zerver.lib.response import json_error, json_success
-from zerver.lib.webhooks.common import check_send_webhook_message
+from zerver.lib.webhooks.common import check_send_webhook_message, \
+    validate_extract_webhook_http_header, UnexpectedWebhookEventType
 from zerver.lib.webhooks.git import SUBJECT_WITH_BRANCH_TEMPLATE, \
     SUBJECT_WITH_PR_OR_ISSUE_INFO_TEMPLATE, get_create_branch_event_message, \
     get_pull_request_event_message, get_push_commits_event_message
 from zerver.models import UserProfile
 
-def format_push_event(payload: Dict[str, Any]) -> Text:
+def format_push_event(payload: Dict[str, Any]) -> str:
 
     for commit in payload['commits']:
         commit['sha'] = commit['id']
@@ -30,7 +31,7 @@ def format_push_event(payload: Dict[str, Any]) -> Text:
 
     return get_push_commits_event_message(**data)
 
-def format_new_branch_event(payload: Dict[str, Any]) -> Text:
+def format_new_branch_event(payload: Dict[str, Any]) -> str:
 
     branch_name = payload['ref']
     url = '{}/src/{}'.format(payload['repository']['html_url'], branch_name)
@@ -42,7 +43,8 @@ def format_new_branch_event(payload: Dict[str, Any]) -> Text:
     }
     return get_create_branch_event_message(**data)
 
-def format_pull_request_event(payload: Dict[str, Any]) -> Text:
+def format_pull_request_event(payload: Dict[str, Any],
+                              include_title: Optional[bool]=False) -> str:
 
     data = {
         'user_name': payload['pull_request']['user']['username'],
@@ -51,6 +53,7 @@ def format_pull_request_event(payload: Dict[str, Any]) -> Text:
         'number': payload['pull_request']['number'],
         'target_branch': payload['pull_request']['head_branch'],
         'base_branch': payload['pull_request']['base_branch'],
+        'title': payload['pull_request']['title'] if include_title else None
     }
 
     if payload['pull_request']['merged']:
@@ -63,10 +66,11 @@ def format_pull_request_event(payload: Dict[str, Any]) -> Text:
 @has_request_variables
 def api_gogs_webhook(request: HttpRequest, user_profile: UserProfile,
                      payload: Dict[str, Any]=REQ(argument_type='body'),
-                     branches: Optional[Text]=REQ(default=None)) -> HttpResponse:
+                     branches: Optional[str]=REQ(default=None),
+                     user_specified_topic: Optional[str]=REQ("topic", default=None)) -> HttpResponse:
 
     repo = payload['repository']['name']
-    event = request.META['HTTP_X_GOGS_EVENT']
+    event = validate_extract_webhook_http_header(request, 'X_GOGS_EVENT', 'Gogs')
     if event == 'push':
         branch = payload['ref'].replace('refs/heads/', '')
         if branches is not None and branches.find(branch) == -1:
@@ -83,7 +87,10 @@ def api_gogs_webhook(request: HttpRequest, user_profile: UserProfile,
             branch=payload['ref']
         )
     elif event == 'pull_request':
-        body = format_pull_request_event(payload)
+        body = format_pull_request_event(
+            payload,
+            include_title=user_specified_topic is not None
+        )
         topic = SUBJECT_WITH_PR_OR_ISSUE_INFO_TEMPLATE.format(
             repo=repo,
             type='PR',
@@ -91,7 +98,7 @@ def api_gogs_webhook(request: HttpRequest, user_profile: UserProfile,
             title=payload['pull_request']['title']
         )
     else:
-        return json_error(_('Invalid event "{}" in request headers').format(event))
+        raise UnexpectedWebhookEventType('Gogs', event)
 
     check_send_webhook_message(request, user_profile, topic, body)
     return json_success()

@@ -46,8 +46,8 @@ function wrap_quote(text) {
     _.each(paragraphs, function (paragraph) {
         var lines = paragraph.split('\n');
         quoted_paragraphs.push(_.map(
-                                    _.reject(lines, function (line) { return line === ''; }),
-                                    function (line) { return '> ' + line; }).join('\n'));
+            _.reject(lines, function (line) { return line === ''; }),
+            function (line) { return '> ' + line; }).join('\n'));
     });
     return quoted_paragraphs.join('\n\n');
 }
@@ -195,3 +195,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = fenced_code;
 }
+window.fenced_code = fenced_code;

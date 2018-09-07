@@ -33,7 +33,7 @@ exports.update_in_home_view = function (sub, value) {
             home_msg_list.select_id(home_msg_list.selected_id(),
                                     {use_closest: true, empty_ok: true});
             if (current_msg_list.selected_id() !== -1) {
-                message_viewport.set_message_offset(msg_offset);
+                current_msg_list.view.set_message_offset(msg_offset);
             }
         }
 
@@ -43,7 +43,7 @@ exports.update_in_home_view = function (sub, value) {
         pointer.recenter_pointer_on_display = true;
         pointer.suppress_scroll_pointer_update = true;
 
-        if (! home_msg_list.empty()) {
+        if (!home_msg_list.empty()) {
             message_util.do_unread_count_updates(home_msg_list.all_messages());
         }
     }, 0);
@@ -61,3 +61,4 @@ if (typeof module !== 'undefined') {
     module.exports = stream_muting;
 }
 
+window.stream_muting = stream_muting;

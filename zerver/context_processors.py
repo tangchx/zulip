@@ -56,6 +56,7 @@ def zulip_default_context(request: HttpRequest) -> Dict[str, Any]:
         realm_icon = None
         realm_description = None
         realm_invite_required = False
+        realm_plan_type = 0
     else:
         realm_uri = realm.uri
         realm_name = realm.name
@@ -63,16 +64,19 @@ def zulip_default_context(request: HttpRequest) -> Dict[str, Any]:
         realm_description_raw = realm.description or "The coolest place in the universe."
         realm_description = convert(realm_description_raw, message_realm=realm)
         realm_invite_required = realm.invite_required
+        realm_plan_type = realm.plan_type
 
     register_link_disabled = settings.REGISTER_LINK_DISABLED
     login_link_disabled = settings.LOGIN_LINK_DISABLED
     find_team_link_disabled = settings.FIND_TEAM_LINK_DISABLED
+    allow_search_engine_indexing = False
 
     if (settings.ROOT_DOMAIN_LANDING_PAGE
             and get_subdomain(request) == Realm.SUBDOMAIN_FOR_ROOT_DOMAIN):
         register_link_disabled = True
         login_link_disabled = True
         find_team_link_disabled = False
+        allow_search_engine_indexing = True
 
     apps_page_url = 'https://zulipchat.com/apps/'
     if settings.ZILENCER_ENABLED:
@@ -112,6 +116,7 @@ def zulip_default_context(request: HttpRequest) -> Dict[str, Any]:
         'realm_name': realm_name,
         'realm_icon': realm_icon,
         'realm_description': realm_description,
+        'realm_plan_type': realm_plan_type,
         'root_domain_uri': settings.ROOT_DOMAIN_URI,
         'apps_page_url': apps_page_url,
         'open_realm_creation': settings.OPEN_REALM_CREATION,
@@ -129,16 +134,12 @@ def zulip_default_context(request: HttpRequest) -> Dict[str, Any]:
         'password_min_length': settings.PASSWORD_MIN_LENGTH,
         'password_min_guesses': settings.PASSWORD_MIN_GUESSES,
         'jitsi_server_url': settings.JITSI_SERVER_URL,
+        'two_factor_authentication_enabled': settings.TWO_FACTOR_AUTHENTICATION_ENABLED,
         'zulip_version': ZULIP_VERSION,
         'user_is_authenticated': user_is_authenticated,
         'settings_path': settings_path,
         'secrets_path': secrets_path,
         'settings_comments_path': settings_comments_path,
         'platform': platform,
-    }
-
-
-def add_metrics(request: HttpRequest) -> Dict[str, str]:
-    return {
-        'dropboxAppKey': settings.DROPBOX_APP_KEY
+        'allow_search_engine_indexing': allow_search_engine_indexing,
     }

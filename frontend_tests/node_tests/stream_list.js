@@ -1,3 +1,4 @@
+set_global('document', 'document-stub');
 set_global('$', global.make_zjquery());
 
 set_global('templates', {});
@@ -10,10 +11,13 @@ zrequire('stream_sort');
 zrequire('colorspace');
 zrequire('stream_color');
 zrequire('hash_util');
-zrequire('narrow');
 zrequire('unread');
 zrequire('stream_data');
+zrequire('scroll_util');
+zrequire('list_cursor');
 zrequire('stream_list');
+
+stream_color.initialize();
 
 var noop = function () {};
 var return_false = function () { return false; };
@@ -21,8 +25,13 @@ var return_true = function () { return true; };
 
 set_global('topic_list', {});
 set_global('overlays', {});
+set_global('popovers', {});
 
-(function test_create_sidebar_row() {
+set_global('keydown_util', {
+    handle: noop,
+});
+
+run_test('create_sidebar_row', () => {
     // Make a couple calls to create_sidebar_row() and make sure they
     // generate the right markup as well as play nice with get_stream_li().
 
@@ -144,7 +153,10 @@ set_global('overlays', {});
 
     row.remove();
     assert(removed);
-}());
+});
+
+set_global('$', global.make_zjquery());
+
 function add_row(sub) {
     global.stream_data.add_sub(sub.name, sub);
     var row = {
@@ -160,6 +172,7 @@ function add_row(sub) {
     };
     stream_list.stream_sidebar.set_row(sub.stream_id, row);
 }
+
 function initialize_stream_data() {
     stream_data.clear_subscriptions();
 
@@ -220,12 +233,126 @@ function initialize_stream_data() {
     add_row(carSub);
 }
 
-(function test_narrowing() {
+function test_helper() {
+    var events = [];
+
+    return {
+        redirect: (module_name, func_name) => {
+            const full_name = module_name + '.' + func_name;
+            global[module_name][func_name] = () => {
+                events.push(full_name);
+            };
+        },
+        events: events,
+    };
+}
+
+function elem($obj) {
+    return {to_$: () => $obj};
+}
+
+run_test('zoom_in_and_zoom_out', () => {
+    var helper;
+
+    var callbacks;
+    topic_list.set_click_handlers = (opts) => {
+        callbacks = opts;
+    };
+
+    helper = test_helper();
+
+    helper.redirect('popovers', 'hide_all');
+    helper.redirect('topic_list', 'zoom_in');
+
+    var label1 = $.create('label1 stub');
+    var label2 = $.create('label2 stub');
+
+    label1.show();
+    label2.show();
+
+    assert(label1.visible());
+    assert(label2.visible());
+
+    $('.stream-filters-label').each = (f) => {
+        f.call(elem(label1));
+        f.call(elem(label2));
+    };
+
+    const splitter = $.create('hr stub');
+
+    splitter.show();
+    assert(splitter.visible());
+
+    $('.stream-split').each = (f) => {
+        f.call(elem(splitter));
+    };
+
+    const stream_li1 = $.create('stream1 stub');
+    const stream_li2 = $.create('stream2 stub');
+
+    function make_attr(arg) {
+        return (sel) => {
+            assert.equal(sel, 'data-stream-id');
+            return arg;
+        };
+    }
+
+    stream_li1.attr = make_attr('42');
+    stream_li1.hide();
+    stream_li2.attr = make_attr('99');
+
+    $('#stream_filters li.narrow-filter').each = (f) => {
+        f.call(elem(stream_li1));
+        f.call(elem(stream_li2));
+    };
+    stream_list.initialize();
+
+    callbacks.zoom_in({stream_id: 42});
+
+    assert.deepEqual(helper.events, [
+        'popovers.hide_all',
+        'topic_list.zoom_in',
+    ]);
+
+    assert(!label1.visible());
+    assert(!label2.visible());
+    assert(!splitter.visible());
+    assert(stream_li1.visible());
+    assert(!stream_li2.visible());
+    assert($('#streams_list').hasClass('zoom-in'));
+
+    helper = test_helper();
+    helper.redirect('popovers', 'hide_all');
+    helper.redirect('topic_list', 'zoom_out');
+    helper.redirect('scroll_util', 'scroll_element_into_container');
+
+    $('#stream_filters li.narrow-filter').show = () => {
+        stream_li1.show();
+        stream_li2.show();
+    };
+
+    stream_li1.length = 1;
+    callbacks.zoom_out({stream_li: stream_li1});
+
+    assert.deepEqual(helper.events, [
+        'popovers.hide_all',
+        'topic_list.zoom_out',
+        'scroll_util.scroll_element_into_container',
+    ]);
+
+    assert(label1.visible());
+    assert(label2.visible());
+    assert(splitter.visible());
+    assert(stream_li1.visible());
+    assert(stream_li2.visible());
+    assert($('#streams_list').hasClass('zoom-out'));
+});
+
+set_global('$', global.make_zjquery());
+
+run_test('narrowing', () => {
     initialize_stream_data();
 
-    var document = 'document-stub';
-
-    set_global('document', document);
     set_global('narrow_state', {
         stream: function () { return 'devel'; },
         topic: noop,
@@ -237,7 +364,7 @@ function initialize_stream_data() {
     topic_list.rebuild = noop;
     topic_list.active_stream_id = noop;
     stream_list.show_all_streams = noop;
-    stream_list.scroll_element_into_container = noop;
+    scroll_util.scroll_element_into_container = noop;
 
     var scrollbar_updated = false;
 
@@ -277,144 +404,37 @@ function initialize_stream_data() {
     stream_list.handle_narrow_activated(filter);
     assert(!$("ul.filters li").hasClass('active-filter'));
     assert($('<cars sidebar row html>').hasClass('active-filter'));
-}());
 
-var keydown_handler = $('.stream-list-filter').get_on_handler('keydown');
-
-(function test_arrow_navigation() {
-
-    stream_list.build_stream_list();
-    initialize_stream_data();
-
-    var stream_order = ['devel', 'Rome', 'test',
-                        '-divider-', 'announce','Denmark',
-                        '-divider-','cars'];
-    var stream_count = 8;
-
-    // Mock the jquery is func
-    $('.stream-list-filter').is = function (sel) {
-        if (sel === ':focus') {
-            return $('.stream-list-filter').is_focused();
-        }
+    var removed_classes;
+    $("ul#stream_filters li").removeClass = (classes) => {
+        removed_classes = classes;
     };
 
-    // Mock the jquery first func
-    $('#stream_filters li.narrow-filter').first = function () {
-        return $('#stream_filters li[data-stream-name="' + stream_order[0] + '"]');
-    };
-    $('#stream_filters li.narrow-filter').last = function () {
-        return $('#stream_filters li[data-stream-name="' + stream_order[stream_count - 1] + '"]');
+    var topics_closed;
+    topic_list.close = () => {
+        topics_closed = true;
     };
 
-    var sel_index = 0;
-    // Returns which element is highlighted
-    $('#stream_filters li.narrow-filter.highlighted_stream')
-        .expectOne().data = function () {
-            // Return random id (is further not used)
-            return 1;
-        };
+    stream_list.handle_narrow_deactivated();
+    assert.equal(removed_classes, 'active-filter active-sub-filter');
+    assert(topics_closed);
+});
 
-    // Returns element before highlighted one
-    $('#stream_filters li.narrow-filter.highlighted_stream')
-        .expectOne().prev = function () {
-            if (sel_index === 0) {
-                // Top, no prev element
-                return $('div.no_stream');
-            } else if (sel_index === 3 || sel_index === 6) {
-                return $('div.divider');
-            }
-            return $('#stream_filters li[data-stream-name="'
-                        + stream_order[sel_index-1] + '"]');
-        };
-
-    // Returns element after highlighted one
-    $('#stream_filters li.narrow-filter.highlighted_stream')
-        .expectOne().next = function () {
-            if (sel_index === stream_count - 1) {
-                // Bottom, no next element
-                return $('div.no_stream');
-            } else if (sel_index === 3 || sel_index === 6) {
-                return $('div.divider');
-            }
-            return $('#stream_filters li[data-stream-name="'
-                        + stream_order[sel_index + 1] + '"]');
-        };
-
-    for (var i = 0; i < stream_count; i = i + 1) {
-        if (i === 3 || i === 6) {
-            $('#stream_filters li[data-stream-name="' + stream_order[i] + '"]')
-                .is = return_false;
-        } else {
-            $('#stream_filters li[data-stream-name="' + stream_order[i] + '"]')
-                .is = return_true;
-        }
-    }
-
-    $('div.no_stream').is = return_false;
-    $('div.divider').is = return_false;
-
-    $('#stream_filters li.narrow-filter').length = stream_count;
-
-    // up
-    var e = {
-        keyCode: 38,
-        stopPropagation: function () {},
-        preventDefault: function () {},
-    };
-
-    keydown_handler(e);
-    // Now the last element is highlighted
-    sel_index = stream_count - 1;
-    keydown_handler(e);
-    sel_index = sel_index - 1;
-
-    // down
-    e = {
-        keyCode: 40,
-        stopPropagation: function () {},
-        preventDefault: function () {},
-    };
-    keydown_handler(e);
-    sel_index = sel_index + 1;
-    keydown_handler(e);
-}());
-
-(function test_enter_press() {
-    var e = {
-        keyCode: 13,
-        stopPropagation: function () {},
-        preventDefault: function () {},
-    };
-
-    overlays.is_active = return_false;
-    narrow_state.active = return_false;
-    stream_data.get_sub_by_id = function () {
-        return 'name';
-    };
-    narrow.by = noop;
-    stream_list.clear_and_hide_search = noop;
-
-    // Enter text and narrow users
-    $(".stream-list-filter").expectOne().val('');
-
-    keydown_handler(e);
-}());
-
-(function test_focusout_user_filter() {
+run_test('focusout_user_filter', () => {
     var e = { };
     var click_handler = $('.stream-list-filter').get_on_handler('focusout');
     click_handler(e);
-}());
+});
 
-(function test_focus_user_filter() {
+run_test('focus_user_filter', () => {
     var e = {
         stopPropagation: function () {},
     };
     var click_handler = $('.stream-list-filter').get_on_handler('click');
     click_handler(e);
-}());
+});
 
-(function test_sort_streams() {
+run_test('sort_streams', () => {
     stream_data.clear_subscriptions();
 
     // Get coverage on early-exit.
@@ -467,9 +487,9 @@ var keydown_handler = $('.stream-list-filter').get_on_handler('keydown');
     assert(stream_list.stream_sidebar.has_row_for(stream_id));
     stream_list.remove_sidebar_row(stream_id);
     assert(!stream_list.stream_sidebar.has_row_for(stream_id));
-}());
+});
 
-(function test_separators_only_pinned_and_dormant() {
+run_test('separators_only_pinned_and_dormant', () => {
 
     // Test only pinned and dormant streams
 
@@ -529,9 +549,9 @@ var keydown_handler = $('.stream-list-filter').get_on_handler('keydown');
 
     assert.deepEqual(appended_elems, expected_elems);
 
-}());
+});
 
-(function test_separators_only_pinned() {
+run_test('separators_only_pinned', () => {
 
     // Test only pinned streams
 
@@ -576,8 +596,8 @@ var keydown_handler = $('.stream-list-filter').get_on_handler('keydown');
 
     assert.deepEqual(appended_elems, expected_elems);
 
-}());
-(function test_update_count_in_dom() {
+});
+run_test('update_count_in_dom', () => {
     function make_elem(elem, count_selector, value_selector) {
         var count = $(count_selector);
         var value = $(value_selector);
@@ -644,9 +664,83 @@ var keydown_handler = $('.stream-list-filter').get_on_handler('keydown');
         topic: 'lunch',
         count: 555,
     });
-}());
+});
 
-(function test_create_initial_sidebar_rows() {
+narrow_state.active = () => false;
+
+run_test('rename_stream', () => {
+    const old_stream_id = stream_data.get_stream_id('devel');
+    const renamed_devel = {
+        name: 'Development',
+        stream_id: old_stream_id,
+        color: 'blue',
+        subscribed: true,
+        pin_to_top: true,
+    };
+
+    const li_stub = $.create('li stub');
+    templates.render = (name, payload) => {
+        assert.equal(name, 'stream_sidebar_row');
+        assert.deepEqual(payload, {
+            name: 'Development',
+            id: 1000,
+            uri: '#narrow/stream/Development',
+            not_in_home_view: false,
+            invite_only: undefined,
+            color: payload.color,
+            pin_to_top: true,
+            dark_background: payload.dark_background,
+        });
+        return {to_$: () => li_stub};
+    };
+
+    var count_updated;
+    stream_list.update_count_in_dom = (li) => {
+        assert.equal(li, li_stub);
+        count_updated = true;
+    };
+
+    stream_list.rename_stream(renamed_devel);
+    assert(count_updated);
+});
+
+set_global('$', global.make_zjquery());
+
+run_test('refresh_pin', () => {
+    initialize_stream_data();
+
+    const sub = {
+        name: 'maybe_pin',
+        stream_id: 100,
+        color: 'blue',
+        pin_to_top: false,
+    };
+
+    stream_data.add_sub(sub.name, sub);
+
+    const pinned_sub = _.extend(sub, {
+        pin_to_top: true,
+    });
+
+    const li_stub = $.create('li stub');
+    templates.render = () => {
+        return {to_$: () => li_stub};
+    };
+
+    stream_list.update_count_in_dom = noop;
+    $('#stream_filters').append = noop;
+
+    var scrolled;
+    stream_list.scroll_stream_into_view = (li) => {
+        assert.equal(li, li_stub);
+        scrolled = true;
+    };
+
+    stream_list.refresh_pinned_or_unpinned_stream(pinned_sub);
+    assert(scrolled);
+});
+
+run_test('create_initial_sidebar_rows', () => {
     initialize_stream_data();
 
     var html_dict = new Dict();
@@ -670,58 +764,4 @@ var keydown_handler = $('.stream-list-filter').get_on_handler('keydown');
 
     assert.equal(html_dict.get(1000), '<div>stub-html-devel');
     assert.equal(html_dict.get(5000), '<div>stub-html-Denmark');
-}());
-
-(function test_scroll_delta() {
-    // If we are entirely on-screen, don't scroll
-    assert.equal(0, stream_list.scroll_delta({
-        elem_top: 1,
-        elem_bottom: 9,
-        container_height: 10,
-    }));
-
-    assert.equal(0, stream_list.scroll_delta({
-        elem_top: -5,
-        elem_bottom: 15,
-        container_height: 10,
-    }));
-
-    // The top is offscreen.
-    assert.equal(-3, stream_list.scroll_delta({
-        elem_top: -3,
-        elem_bottom: 5,
-        container_height: 10,
-    }));
-
-    assert.equal(-3, stream_list.scroll_delta({
-        elem_top: -3,
-        elem_bottom: -1,
-        container_height: 10,
-    }));
-
-    assert.equal(-11, stream_list.scroll_delta({
-        elem_top: -150,
-        elem_bottom: -1,
-        container_height: 10,
-    }));
-
-    // The bottom is offscreen.
-    assert.equal(3, stream_list.scroll_delta({
-        elem_top: 7,
-        elem_bottom: 13,
-        container_height: 10,
-    }));
-
-    assert.equal(3, stream_list.scroll_delta({
-        elem_top: 11,
-        elem_bottom: 13,
-        container_height: 10,
-    }));
-
-    assert.equal(11, stream_list.scroll_delta({
-        elem_top: 11,
-        elem_bottom: 99,
-        container_height: 10,
-    }));
-
-}());
+});

@@ -4,11 +4,12 @@ import os
 import re
 import ujson
 
+from django.conf import settings
 from django.http import HttpResponse
 from django.test import override_settings
 from mock import MagicMock, patch
 import urllib
-from typing import Any, Dict, List, Text
+from typing import Any, Dict, List
 
 from zerver.lib.actions import do_create_user
 from zerver.lib.test_classes import ZulipTestCase
@@ -37,32 +38,35 @@ class HomeTest(ZulipTestCase):
             'Next message',
             'Search streams',
             'Welcome to Zulip',
-            'pygments.css',
+            # Verify that the app styles get included
+            'app-stubentry.js',
             'var page_params',
         ]
 
         # Keep this list sorted!!!
         expected_keys = [
             "alert_words",
-            "attachments",
             "avatar_source",
             "avatar_url",
             "avatar_url_medium",
             "bot_types",
             "can_create_streams",
+            "can_subscribe_other_users",
             "cross_realm_bots",
             "custom_profile_field_types",
             "custom_profile_fields",
             "debug_mode",
-            "default_desktop_notifications",
             "default_language",
             "default_language_name",
+            "delivery_email",
+            "dense_mode",
             "development_environment",
             "email",
             "emojiset",
             "emojiset_choices",
             "enable_desktop_notifications",
             "enable_digest_emails",
+            "enable_login_emails",
             "enable_offline_email_notifications",
             "enable_offline_push_notifications",
             "enable_online_push_notifications",
@@ -81,6 +85,7 @@ class HomeTest(ZulipTestCase):
             "hotspots",
             "initial_servertime",
             "is_admin",
+            "is_guest",
             "jitsi_server_url",
             "language_list",
             "language_list_dbl_col",
@@ -112,6 +117,7 @@ class HomeTest(ZulipTestCase):
             "realm_allow_message_deleting",
             "realm_allow_message_editing",
             "realm_authentication_methods",
+            "realm_available_video_chat_providers",
             "realm_bot_creation_policy",
             "realm_bot_domain",
             "realm_bots",
@@ -121,13 +127,16 @@ class HomeTest(ZulipTestCase):
             "realm_default_streams",
             "realm_default_twenty_four_hour_time",
             "realm_description",
+            "realm_digest_emails_enabled",
             "realm_disallow_disposable_email_addresses",
             "realm_domains",
             "realm_email_auth_enabled",
             "realm_email_changes_disabled",
+            "realm_emails_restricted_to_domains",
             "realm_embedded_bots",
             "realm_emoji",
             "realm_filters",
+            "realm_google_hangouts_domain",
             "realm_icon_source",
             "realm_icon_url",
             "realm_inline_image_preview",
@@ -136,6 +145,7 @@ class HomeTest(ZulipTestCase):
             "realm_invite_required",
             "realm_is_zephyr_mirror_realm",
             "realm_mandatory_topics",
+            "realm_message_content_delete_limit_seconds",
             "realm_message_content_edit_limit_seconds",
             "realm_message_retention_days",
             "realm_name",
@@ -145,24 +155,32 @@ class HomeTest(ZulipTestCase):
             "realm_notifications_stream_id",
             "realm_password_auth_enabled",
             "realm_presence_disabled",
-            "realm_restricted_to_domain",
+            "realm_push_notifications_enabled",
             "realm_send_welcome_emails",
-            "realm_show_digest_email",
             "realm_signup_notifications_stream_id",
             "realm_uri",
             "realm_user_groups",
             "realm_users",
+            "realm_video_chat_provider",
             "realm_waiting_period_threshold",
             "root_domain_uri",
             "save_stacktraces",
+            "search_pills_enabled",
             "server_generation",
             "server_inline_image_preview",
             "server_inline_url_embed_preview",
+            "starred_message_counts",
+            "starred_messages",
+            "stream_description_max_length",
+            "stream_name_max_length",
             "subscriptions",
             "test_suite",
             "timezone",
             "translate_emoticons",
+            "translation_data",
             "twenty_four_hour_time",
+            "two_fa_enabled",
+            "two_fa_enabled_user",
             "unread_msgs",
             "unsubscribed",
             "use_websockets",
@@ -192,8 +210,8 @@ class HomeTest(ZulipTestCase):
             with patch('zerver.lib.cache.cache_set') as cache_mock:
                 result = self._get_home_page(stream='Denmark')
 
-        self.assert_length(queries, 43)
-        self.assert_length(cache_mock.call_args_list, 8)
+        self.assert_length(queries, 42)
+        self.assert_length(cache_mock.call_args_list, 7)
 
         html = result.content.decode('utf-8')
 
@@ -227,6 +245,28 @@ class HomeTest(ZulipTestCase):
         realm_bots_actual_keys = sorted([str(key) for key in page_params['realm_bots'][0].keys()])
         self.assertEqual(realm_bots_actual_keys, realm_bots_expected_keys)
 
+    def test_home_under_2fa_without_otp_device(self) -> None:
+        with self.settings(TWO_FACTOR_AUTHENTICATION_ENABLED=True):
+            self.login(self.example_email("iago"))
+            result = self._get_home_page()
+            # Should be successful because otp device is not configured.
+            self.assertEqual(result.status_code, 200)
+
+    def test_home_under_2fa_with_otp_device(self) -> None:
+        with self.settings(TWO_FACTOR_AUTHENTICATION_ENABLED=True):
+            user_profile = self.example_user('iago')
+            self.create_default_device(user_profile)
+            self.login(user_profile.email)
+            result = self._get_home_page()
+            # User should not log in because otp device is configured but
+            # 2fa login function was not called.
+            self.assertEqual(result.status_code, 302)
+
+            self.login_2fa(user_profile)
+            result = self._get_home_page()
+            # Should be successful after calling 2fa login function.
+            self.assertEqual(result.status_code, 200)
+
     def test_num_queries_for_realm_admin(self) -> None:
         # Verify number of queries for Realm admin isn't much higher than for normal users.
         self.login(self.example_email("iago"))
@@ -235,8 +275,8 @@ class HomeTest(ZulipTestCase):
             with patch('zerver.lib.cache.cache_set') as cache_mock:
                 result = self._get_home_page()
                 self.assertEqual(result.status_code, 200)
-                self.assert_length(cache_mock.call_args_list, 17)
-            self.assert_length(queries, 59)
+                self.assert_length(cache_mock.call_args_list, 6)
+            self.assert_length(queries, 38)
 
     @slow("Creates and subscribes 10 users in a loop.  Should use bulk queries.")
     def test_num_queries_with_streams(self) -> None:
@@ -284,7 +324,7 @@ class HomeTest(ZulipTestCase):
     def _get_page_params(self, result: HttpResponse) -> Dict[str, Any]:
         html = result.content.decode('utf-8')
         lines = html.split('\n')
-        page_params_line = [l for l in lines if re.match('^\s*var page_params', l)][0]
+        page_params_line = [l for l in lines if re.match(r'^\s*var page_params', l)][0]
         page_params_json = page_params_line.split(' = ')[1].rstrip(';')
         page_params = ujson.loads(page_params_json)
         return page_params
@@ -349,7 +389,8 @@ class HomeTest(ZulipTestCase):
         self.login(email)
         with patch('logging.exception') as mock:
             result = self._get_home_page(stream='Invalid Stream')
-        mock.assert_called_once_with('Narrow parsing')
+        mock.assert_called_once()
+        self.assertEqual(mock.call_args_list[0][0][0], "Narrow parsing exception")
         self._sanity_check(result)
 
     def test_bad_pointer(self) -> None:
@@ -382,7 +423,7 @@ class HomeTest(ZulipTestCase):
         page_params = self._get_page_params(result)
         self.assertEqual(page_params['realm_notifications_stream_id'], get_stream('Denmark', realm).id)
 
-    def create_bot(self, owner: UserProfile, bot_email: Text, bot_name: Text) -> UserProfile:
+    def create_bot(self, owner: UserProfile, bot_email: str, bot_name: str) -> UserProfile:
         user = do_create_user(
             email=bot_email,
             password='123',
@@ -394,7 +435,7 @@ class HomeTest(ZulipTestCase):
         )
         return user
 
-    def create_non_active_user(self, realm: Realm, email: Text, name: Text) -> UserProfile:
+    def create_non_active_user(self, realm: Realm, email: str, name: str) -> UserProfile:
         user = do_create_user(
             email=email,
             password='123',
@@ -491,6 +532,11 @@ class HomeTest(ZulipTestCase):
         cross_bots = page_params['cross_realm_bots']
         self.assertEqual(len(cross_bots), 5)
         cross_bots.sort(key=lambda d: d['email'])
+        for cross_bot in cross_bots:
+            # These are either nondeterministic or boring
+            del cross_bot['timezone']
+            del cross_bot['avatar_url']
+            del cross_bot['date_joined']
 
         notification_bot = self.notification_bot()
 
@@ -567,6 +613,21 @@ class HomeTest(ZulipTestCase):
         html = result.content.decode('utf-8')
         self.assertIn('Invite more users', html)
 
+    def test_show_invites_for_guest_users(self) -> None:
+        user_profile = self.example_user('polonius')
+        email = user_profile.email
+
+        realm = user_profile.realm
+        realm.invite_by_admins_only = False
+        realm.save()
+
+        self.login(email)
+        self.assertFalse(user_profile.is_realm_admin)
+        self.assertFalse(get_realm('zulip').invite_by_admins_only)
+        result = self._get_home_page()
+        html = result.content.decode('utf-8')
+        self.assertNotIn('Invite more users', html)
+
     def test_desktop_home(self) -> None:
         email = self.example_email("hamlet")
         self.login(email)
@@ -609,7 +670,7 @@ class HomeTest(ZulipTestCase):
 
     def test_handlebars_compile_error(self) -> None:
         request = HostRequestMock()
-        with self.settings(DEVELOPMENT=True):
+        with self.settings(DEVELOPMENT=True, TEST_SUITE=False):
             with patch('os.path.exists', return_value=True):
                 result = home(request)
         self.assertEqual(result.status_code, 500)
@@ -719,3 +780,42 @@ class HomeTest(ZulipTestCase):
         idle_user_msg_list = get_user_messages(long_term_idle_user)
         self.assertEqual(idle_user_msg_list[-1].content, message)
         self.logout()
+
+    def test_url_language(self) -> None:
+        user = self.example_user("hamlet")
+        user.default_language = 'es'
+        user.save()
+        self.login(user.email)
+        result = self._get_home_page()
+        self.assertEqual(result.status_code, 200)
+        with \
+                patch('zerver.lib.events.request_event_queue', return_value=42), \
+                patch('zerver.lib.events.get_user_events', return_value=[]):
+            result = self.client_get('/de/')
+        page_params = self._get_page_params(result)
+        self.assertEqual(page_params['default_language'], 'es')
+        # TODO: Verify that the actual language we're using in the
+        # translation data is German.
+
+    def test_translation_data(self) -> None:
+        user = self.example_user("hamlet")
+        user.default_language = 'es'
+        user.save()
+        self.login(user.email)
+        result = self._get_home_page()
+        self.assertEqual(result.status_code, 200)
+
+        page_params = self._get_page_params(result)
+        self.assertEqual(page_params['default_language'], 'es')
+
+    def test_emojiset(self) -> None:
+        user = self.example_user("hamlet")
+        user.emojiset = 'text'
+        user.save()
+        self.login(user.email)
+        result = self._get_home_page()
+        self.assertEqual(result.status_code, 200)
+
+        html = result.content.decode('utf-8')
+        self.assertIn('google-sprite.css', html)
+        self.assertNotIn('text-sprite.css', html)

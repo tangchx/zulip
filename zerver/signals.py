@@ -8,10 +8,14 @@ from django.template import loader
 from django.utils.timezone import \
     get_current_timezone_name as timezone_get_current_timezone_name
 from django.utils.timezone import now as timezone_now
+from django.utils.translation import ugettext_lazy as _
 
 from zerver.lib.queue import queue_json_publish
-from zerver.lib.send_email import FromAddress, send_email
+from zerver.lib.send_email import FromAddress
 from zerver.models import UserProfile
+from zerver.lib.timezone import get_timezone
+
+JUST_CREATED_THRESHOLD = 60
 
 def get_device_browser(user_agent: str) -> Optional[str]:
     user_agent = user_agent.lower()
@@ -55,6 +59,8 @@ def get_device_os(user_agent: str) -> Optional[str]:
 
 @receiver(user_logged_in, dispatch_uid="only_on_login")
 def email_on_new_login(sender: Any, user: UserProfile, request: Any, **kwargs: Any) -> None:
+    if not user.enable_login_emails:
+        return
     # We import here to minimize the dependencies of this module,
     # since it runs as part of `manage.py` initialization
     from zerver.context_processors import common_context
@@ -64,24 +70,25 @@ def email_on_new_login(sender: Any, user: UserProfile, request: Any, **kwargs: A
 
     if request:
         # If the user's account was just created, avoid sending an email.
-        if getattr(user, "just_registered", False):
+        if (timezone_now() - user.date_joined).total_seconds() <= JUST_CREATED_THRESHOLD:
             return
 
-        login_time = timezone_now().strftime('%A, %B %d, %Y at %I:%M%p ') + \
-            timezone_get_current_timezone_name()
         user_agent = request.META.get('HTTP_USER_AGENT', "").lower()
-        device_browser = get_device_browser(user_agent)
-        device_os = get_device_os(user_agent)
-        device_ip = request.META.get('REMOTE_ADDR') or "Uknown IP address"
-        device_info = {"device_browser": device_browser,
-                       "device_os": device_os,
-                       "device_ip": device_ip,
-                       "login_time": login_time
-                       }
 
         context = common_context(user)
-        context['device_info'] = device_info
         context['user_email'] = user.email
+        user_tz = user.timezone
+        if user_tz == '':
+            user_tz = timezone_get_current_timezone_name()
+        local_time = timezone_now().astimezone(get_timezone(user_tz))
+        if user.twenty_four_hour_time:
+            hhmm_string = local_time.strftime('%H:%M')
+        else:
+            hhmm_string = local_time.strftime('%I:%M%p')
+        context['login_time'] = local_time.strftime('%A, %B %d, %Y at {} %Z'.format(hhmm_string))
+        context['device_ip'] = request.META.get('REMOTE_ADDR') or _("Unknown IP address")
+        context['device_os'] = get_device_os(user_agent)
+        context['device_browser'] = get_device_browser(user_agent)
 
         email_dict = {
             'template_prefix': 'zerver/emails/notify_new_login',

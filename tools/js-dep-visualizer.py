@@ -44,11 +44,11 @@ def get_js_edges():
         modules.append(dict(
             name=name,
             path=path,
-            regex=re.compile('[^_]{}\.\w+\('.format(name))
+            regex=re.compile(r'[^_]{}\.\w+\('.format(name))
         ))
 
-    comment_regex = re.compile('\s+//')
-    call_regex = re.compile('[^_](\w+\.\w+)\(')
+    comment_regex = re.compile(r'\s+//')
+    call_regex = re.compile(r'[^_](\w+\.\w+)\(')
 
     methods = defaultdict(list)  # type: DefaultDict[Edge, List[Method]]
     edges = set()
@@ -93,8 +93,6 @@ def find_edges_to_remove(graph, methods):
         ('compose', 'echo'),
         ('compose', 'resize'),
         ('settings', 'resize'),
-        ('settings', 'settings_lab'),
-        ('settings_lab', 'resize'),
         ('compose', 'unread_ops'),
         ('compose', 'drafts'),
         ('echo', 'message_edit'),

@@ -18,20 +18,36 @@ os.chdir(settings.DEPLOY_ROOT)
 STATIC_PATH = 'static/'
 
 
-def run():
-    # type: () -> None
+def run(quiet):
+    # type: (bool) -> None
     """Builds for production, writing the output to disk"""
-    subprocess.check_call(['node', 'node_modules/.bin/webpack'] +
-                          ['--config', 'tools/webpack.config.ts', '-p'] +
-                          ['--env', 'production'])
+    webpack_args = ['node', 'node_modules/.bin/webpack-cli',
+                    '--config', 'tools/webpack.config.ts', '-p',
+                    '--env', 'production']
+    if quiet:
+        webpack_args += ['--display', 'errors-only']
+        print('Starting webpack compilation')
+    subprocess.check_call(webpack_args)
 
-def run_watch(host, port, minify):
-    # type: (str, str, bool) -> None
+def run_watch(host, port, minify, disable_host_check):
+    # type: (str, str, bool, bool) -> None
     """watches and rebuilds on changes, serving files from memory via webpack-dev-server"""
     webpack_args = ['node', 'node_modules/.bin/webpack-dev-server']
-    webpack_args += ['--config', 'tools/webpack.config.ts', '--watch-poll', '--port', port, "--host", host]
+    webpack_args += [
+        '--config',
+        'tools/webpack.config.ts',
+        '--allowed-hosts', ','.join([host, '.zulipdev.com', '.zulipdev.org']),
+        '--host', host,
+        '--port', port,
+        # We add the hot flag using the cli because it takes care
+        # of addition to entry points and adding the plugin
+        # automatically
+        '--hot'
+    ]
     if minify:
         webpack_args.append('--optimize-minimize')
+    if disable_host_check:
+        webpack_args.append('--disable-host-check')
     subprocess.Popen(webpack_args)
 
 def run_test():
@@ -60,6 +76,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--test',
                     action='store_true', dest='test', default=False,
                     help='generate a stub webpack-stats.json file (for backend testing)')
+parser.add_argument('--quiet',
+                    action='store_true', dest='quiet', default=False,
+                    help='Minimizes webpack output while running')
 parser.add_argument('--watch',
                     action='store_true', dest='watch', default=False,
                     help='watch for changes to source files (for development)')
@@ -72,11 +91,14 @@ parser.add_argument('--port',
 parser.add_argument('--minify',
                     action='store_true', dest='minify', default=False,
                     help='Minify and optimize the assets (for development)')
+parser.add_argument('--disable-host-check',
+                    action='store_true', dest='disable_host_check', default=None,
+                    help='Disable host check for webpack-dev-server')
 
 args = parser.parse_args()
 if args.test:
     run_test()
 elif args.watch:
-    run_watch(args.host, args.port, args.minify)
+    run_watch(args.host, args.port, args.minify, args.disable_host_check)
 else:
-    run()
+    run(args.quiet)

@@ -11,7 +11,7 @@
 
 
     {% if password_auth_enabled %}
-    <script type="text/javascript">
+    <script>
         {% if email %}
         common.autofocus('#id_password');
         {% else %}
@@ -32,7 +32,9 @@
                     {# SSO users don't have a password. #}
 
                     <div class="login-sso">
-                        <a id="sso-login" href="/accounts/login/sso/?next={{ next }}" class="btn btn-large btn-primary">{{ _('Log in with SSO') }}</a>
+                        <a id="sso-login" href="/accounts/login/sso/?next={{ next }}" class="btn btn-large btn-primary">
+                            {{ _('Log in with %(identity_provider)s', identity_provider="SSO") }}
+                        </a>
                     </div>
 
                 {% else %}
@@ -65,16 +67,20 @@
                         {% else %}
                             {% if password_auth_enabled %}
                                 <form name="login_form" id="login_form" method="post" class="login-form"
-                                    action="{{ url('django.contrib.auth.views.login') }}?next={{ next }}">
+                                  action="{{ url('django.contrib.auth.views.login') }}?next={{ next }}">
 
+                                    {% if two_factor_authentication_enabled %}
+                                    {{ wizard.management_form }}
+                                    {% endif %}
                                     {{ csrf_input }}
 
                                     <!-- .no-validation is for removing the red star in CSS -->
+                                    {% if not two_factor_authentication_enabled or wizard.steps.current == 'auth' %}
                                     <div class="input-box no-validation">
                                         <input id="id_username" type="{% if not require_email_format_usernames %}text{% else %}email{% endif %}"
-                                               name="username" class="{% if require_email_format_usernames %}email {% endif %}required"
-                                            {% if email %} value="{{ email }}" {% else %} value="" {% endif %}
-                                            maxlength="72" required />
+                                          name="username" class="{% if require_email_format_usernames %}email {% endif %}required"
+                                          {% if email %} value="{{ email }}" {% else %} value="" {% endif %}
+                                          maxlength="72" required />
                                         <label for="id_username">
                                             {% if not require_email_format_usernames and email_auth_enabled %}
                                             {{ _('Email or username') }}
@@ -90,6 +96,9 @@
                                         <input id="id_password" name="password" class="required" type="password" required />
                                         <label for="id_password" class="control-label">{{ _('Password') }}</label>
                                     </div>
+                                    {% else %}
+                                    {% include "two_factor/_wizard_forms.html" %}
+                                    {% endif %}
 
                                     {% if form.errors %}
                                     <div class="alert alert-error">
@@ -118,7 +127,7 @@
                                 </form>
 
                                 {% if any_oauth_backend_enabled %}
-                                <div class="or">{{ _('OR') }}</div>
+                                <div class="or"><span>{{ _('OR') }}</span></div>
                                 {% endif %}
 
                             {% endif %} <!-- if password_auth_enabled -->
@@ -127,7 +136,9 @@
                             <div class="login-google">
                                 <form id='google_login_form' class="form-inline" action="{{ url('zerver.views.auth.start_google_oauth2') }}" method="get">
                                     <input type="hidden" name="next" value="{{ next }}">
-                                    <button class="login-social-button login-google-button full-width">{{ _('Log in with Google') }}</button>
+                                    <button class="login-social-button login-google-button full-width">
+                                        {{ _('Log in with %(identity_provider)s', identity_provider="Google") }}
+                                    </button>
                                 </form>
                             </div>
                             {% endif %}
@@ -136,7 +147,9 @@
                             <div class="login-github">
                                 <form id='social_login_form' class="form-inline github-wrapper" action="{{ url('login-social', args=('github',)) }}" method="get">
                                     <input type="hidden" name="next" value="{{ next }}">
-                                    <button class="login-social-button login-github-button github">{{ _('Log in with GitHub') }}</button>
+                                    <button class="login-social-button login-github-button github">
+                                        {{ _('Log in with %(identity_provider)s', identity_provider="GitHub") }}
+                                    </button>
                                 </form>
                             </div>
                             {% endif %}
@@ -155,7 +168,7 @@
             </div>
         </div>
     </div>
-    <script type="text/javascript">
+    <script>
     if (window.location.hash.substring(0, 1) === "#") {
         /* We append the location.hash to the formaction so that URL can be
         preserved after user is logged in. See this:

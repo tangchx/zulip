@@ -1,6 +1,7 @@
 zrequire('muting');
 zrequire('people');
 zrequire('stream_data');
+zrequire('util');
 zrequire('unread');
 
 set_global('blueslip', {});
@@ -30,31 +31,17 @@ var zero_counts = {
     pm_count: new Dict(),
 };
 
-(function test_empty_counts_while_narrowed() {
-    narrow_state.active = function () {
-        return true;
-    };
-    current_msg_list.all_messages = function () {
-        return [];
-    };
-
+run_test('empty_counts_while_narrowed', () => {
     var counts = unread.get_counts();
     assert.deepEqual(counts, zero_counts);
-}());
+});
 
-(function test_empty_counts_while_home() {
-    narrow_state.active = function () {
-        return false;
-    };
-    current_msg_list.all_messages = function () {
-        return [];
-    };
-
+run_test('empty_counts_while_home', () => {
     var counts = unread.get_counts();
     assert.deepEqual(counts, zero_counts);
-}());
+});
 
-(function test_changing_subjects() {
+run_test('changing_subjects', () => {
     // Summary: change the subject of a message from 'lunch'
     // to 'dinner' using update_unread_topics().
     var count = unread.num_unread_for_topic('social', 'lunch');
@@ -82,8 +69,15 @@ var zero_counts = {
     assert.deepEqual(unread.get_unread_message_ids([15, 16]), []);
     assert.deepEqual(unread.get_unread_messages([message, other_message]), []);
 
+    var msg_ids = unread.get_msg_ids_for_topic(stream_id, 'LuNcH');
+    assert.deepEqual(msg_ids, []);
+
+    msg_ids = unread.get_msg_ids_for_stream(stream_id);
+    assert.deepEqual(msg_ids, []);
+
     unread.process_loaded_messages([message, other_message]);
 
+    assert.deepEqual(unread.get_all_msg_ids(), [15, 16]);
     assert.deepEqual(unread.get_unread_message_ids([15, 16]), [15, 16]);
     assert.deepEqual(
         unread.get_unread_messages([message, other_message]),
@@ -98,6 +92,9 @@ var zero_counts = {
 
     count = unread.num_unread_for_topic(stream_id, 'NOT lunch');
     assert.equal(count, 0);
+
+    msg_ids = unread.get_msg_ids_for_topic(stream_id, 'NOT lunch');
+    assert.deepEqual(msg_ids, []);
 
     var event = {
         subject: 'dinner',
@@ -177,13 +174,9 @@ var zero_counts = {
 
     // test coverage
     unread.update_unread_topics(sticky_message, {});
-}());
+});
 
-stream_data.get_stream_id = function () {
-    return 999;
-};
-
-(function test_muting() {
+run_test('muting', () => {
     stream_data.is_subscribed = function () {
         return true;
     };
@@ -216,56 +209,99 @@ stream_data.get_stream_id = function () {
     assert.equal(counts.stream_count.get(stream_id), 1);
     assert.equal(counts.home_unread_messages, 1);
     assert.equal(unread.num_unread_for_stream(stream_id), 1);
+    assert.deepEqual(unread.get_msg_ids_for_stream(stream_id), [message.id]);
 
     muting.add_muted_topic('social', 'test_muting');
     counts = unread.get_counts();
     assert.equal(counts.stream_count.get(stream_id), 0);
     assert.equal(counts.home_unread_messages, 0);
     assert.equal(unread.num_unread_for_stream(stream_id), 0);
+    assert.deepEqual(unread.get_msg_ids_for_stream(stream_id), []);
+
+    // we still find the message id here (muting is ignored)
+    assert.deepEqual(unread.get_all_msg_ids(), [message.id]);
 
     assert.equal(unread.num_unread_for_stream(unknown_stream_id), 0);
-}());
+});
 
-(function test_num_unread_for_topic() {
+run_test('num_unread_for_topic', () => {
     // Test the num_unread_for_topic() function using many
     // messages.
     unread.declare_bankruptcy();
 
     var stream_id = 301;
+
+    stream_data.get_sub_by_id = function (arg) {
+        if (arg === stream_id) {
+            return {name: 'Some Stream'};
+        }
+    };
+
     var count = unread.num_unread_for_topic(stream_id, 'lunch');
     assert.equal(count, 0);
 
     var message = {
         type: 'stream',
         stream_id: stream_id,
-        subject: 'lunch',
+        subject: 'LuncH',
         unread: true,
     };
 
+    // Put messages into list in reverse order to try to confuse
+    // our sort.
     var num_msgs = 500;
     var i;
-    for (i = 0; i < num_msgs; i += 1) {
-        message.id = i+1;
+    for (i = num_msgs; i > 0; i -= 1) {
+        message.id = i;
         unread.process_loaded_messages([message]);
     }
 
     count = unread.num_unread_for_topic(stream_id, 'lunch');
     assert.equal(count, num_msgs);
 
+    var msg_ids = unread.get_msg_ids_for_topic(stream_id, 'LuNcH');
+    assert.deepEqual(msg_ids, _.range(1, 501));
+
+    msg_ids = unread.get_msg_ids_for_stream(stream_id);
+    assert.deepEqual(msg_ids, _.range(1, 501));
+
+    var topic_dict = new Dict({fold_case: true});
+
+    var missing_topics = unread.get_missing_topics({
+        stream_id: stream_id,
+        topic_dict: topic_dict,
+    });
+
+    assert.deepEqual(missing_topics, [
+        { pretty_name: 'LuncH', message_id: 500 },
+    ]);
+
+    topic_dict.set('lUNCh', 'whatever');
+
+    missing_topics = unread.get_missing_topics({
+        stream_id: stream_id,
+        topic_dict: topic_dict,
+    });
+
+    assert.deepEqual(missing_topics, []);
+
     for (i = 0; i < num_msgs; i += 1) {
-        message.id = i+1;
+        message.id = i + 1;
         unread.mark_as_read(message.id);
     }
 
     count = unread.num_unread_for_topic(stream_id, 'lunch');
     assert.equal(count, 0);
-}());
+
+    msg_ids = unread.get_msg_ids_for_topic(stream_id, 'LuNcH');
+    assert.deepEqual(msg_ids, []);
+
+    msg_ids = unread.get_msg_ids_for_stream(stream_id);
+    assert.deepEqual(msg_ids, []);
+});
 
 
-(function test_home_messages() {
-    narrow_state.active = function () {
-        return false;
-    };
+run_test('home_messages', () => {
     stream_data.is_subscribed = function () {
         return true;
     };
@@ -287,10 +323,6 @@ stream_data.get_stream_id = function () {
         stream_id: stream_id,
         subject: 'lunch',
         unread: true,
-    };
-
-    home_msg_list.get = function (msg_id) {
-        return (msg_id === '15') ? message : undefined;
     };
 
     var counts = unread.get_counts();
@@ -316,9 +348,9 @@ stream_data.get_stream_id = function () {
     counts = unread.get_counts();
     assert.equal(counts.home_unread_messages, 0);
 
-}());
+});
 
-(function test_phantom_messages() {
+run_test('phantom_messages', () => {
     var message = {
         id: 999,
         type: 'stream',
@@ -331,16 +363,9 @@ stream_data.get_stream_id = function () {
     unread.mark_as_read(message.id);
     var counts = unread.get_counts();
     assert.equal(counts.home_unread_messages, 0);
-}());
+});
 
-(function test_private_messages() {
-    narrow_state.active = function () {
-        return false;
-    };
-    stream_data.is_subscribed = function () {
-        return true;
-    };
-
+run_test('private_messages', () => {
     var counts = unread.get_counts();
     assert.equal(counts.private_message_count, 0);
 
@@ -370,9 +395,9 @@ stream_data.get_stream_id = function () {
     counts = unread.get_counts();
     assert.equal(counts.private_message_count, 0);
     assert.equal(counts.pm_count.get('999'), 0);
-}());
+});
 
-(function test_num_unread_for_person() {
+run_test('private_messages', () => {
     var alice = {
         email: 'alice@example.com',
         user_id: 101,
@@ -389,6 +414,10 @@ stream_data.get_stream_id = function () {
 
     assert.equal(unread.num_unread_for_person(alice.user_id), 0);
     assert.equal(unread.num_unread_for_person(bob.user_id), 0);
+    assert.deepEqual(unread.get_msg_ids_for_person(alice.user_id), []);
+    assert.deepEqual(unread.get_msg_ids_for_person(bob.user_id), []);
+    assert.deepEqual(unread.get_msg_ids_for_person(), []);
+    assert.deepEqual(unread.get_msg_ids_for_private(), []);
 
     var message = {
         id: 15,
@@ -404,19 +433,18 @@ stream_data.get_stream_id = function () {
     assert.equal(unread.num_unread_for_person(alice.user_id), 1);
 
     assert.equal(unread.num_unread_for_person(''), 0);
-}());
+
+    assert.deepEqual(unread.get_msg_ids_for_person(alice.user_id), [message.id]);
+    assert.deepEqual(unread.get_msg_ids_for_person(bob.user_id), []);
+    assert.deepEqual(unread.get_msg_ids_for_private(), [message.id]);
+    assert.deepEqual(unread.get_all_msg_ids(), [message.id]);
+});
 
 
-(function test_mentions() {
-    narrow_state.active = function () {
-        return false;
-    };
-    stream_data.is_subscribed = function () {
-        return true;
-    };
-
+run_test('mentions', () => {
     var counts = unread.get_counts();
     assert.equal(counts.mentioned_message_count, 0);
+    assert.deepEqual(unread.get_msg_ids_for_mentions(), []);
 
     var message = {
         id: 15,
@@ -431,12 +459,20 @@ stream_data.get_stream_id = function () {
 
     counts = unread.get_counts();
     assert.equal(counts.mentioned_message_count, 1);
+    assert.deepEqual(unread.get_msg_ids_for_mentions(), [message.id]);
+    assert.deepEqual(unread.get_all_msg_ids(), [message.id]);
     unread.mark_as_read(message.id);
     counts = unread.get_counts();
     assert.equal(counts.mentioned_message_count, 0);
-}());
+});
 
-(function test_declare_bankruptcy() {
+run_test('starring', () => {
+    // We don't need any setup here, because we just hard code
+    // this to [] in the code.
+    assert.deepEqual(unread.get_msg_ids_for_starred(), []);
+});
+
+run_test('declare_bankruptcy', () => {
     var message = {
         id: 16,
         type: 'whatever',
@@ -451,16 +487,16 @@ stream_data.get_stream_id = function () {
 
     var counts = unread.get_counts();
     assert.deepEqual(counts, zero_counts);
-}());
+});
 
-(function test_message_unread() {
+run_test('message_unread', () => {
     // Test some code that might be overly defensive, for line coverage sake.
     assert(!unread.message_unread(undefined));
     assert(unread.message_unread({unread: true}));
     assert(!unread.message_unread({unread: false}));
-}());
+});
 
-(function test_server_counts() {
+run_test('server_counts', () => {
     // note that user_id 30 is "me"
 
     page_params.unread_msgs = {
@@ -513,12 +549,29 @@ stream_data.get_stream_id = function () {
 
     unread.mark_as_read(34);
     assert.equal(unread.num_unread_for_person('4,6,101'), 1);
-}());
+});
 
-(function test_errors() {
+run_test('empty_cases', () => {
     unread.declare_bankruptcy();
 
-    global.blueslip.warn = function () {};
+    const stream_id = 999;
+    var msg_ids = unread.get_msg_ids_for_topic(stream_id, 'LuNcH');
+    assert.deepEqual(msg_ids, []);
+
+    msg_ids = unread.get_msg_ids_for_stream(stream_id);
+    assert.deepEqual(msg_ids, []);
+    assert.deepEqual(unread.get_all_msg_ids(), []);
+
+    const missing_topics = unread.get_missing_topics({
+        stream_id: stream_id,
+        topic_dict: 'should-never-be-referenced',
+    });
+    assert.deepEqual(missing_topics, []);
+
+});
+
+run_test('errors', () => {
+    unread.declare_bankruptcy();
 
     // Test unknown message leads to zero count
     var message = {
@@ -530,5 +583,5 @@ stream_data.get_stream_id = function () {
     unread.mark_as_read(message.id);
     var counts = unread.get_counts();
     assert.equal(counts.private_message_count, 0);
-}());
+});
 

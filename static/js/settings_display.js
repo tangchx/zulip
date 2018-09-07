@@ -6,10 +6,19 @@ var meta = {
     loaded: false,
 };
 
-function change_display_setting(data, status_element, success_msg) {
+function change_display_setting(data, status_element, success_msg, sticky) {
+    var $status_el = $(status_element);
+    var status_is_sticky = $status_el.data('is_sticky');
+    var display_message = status_is_sticky ? $status_el.data('sticky_msg') : success_msg;
     var opts = {
-        success_msg: success_msg,
+        success_msg: display_message,
+        sticky: status_is_sticky || sticky,
     };
+
+    if (sticky) {
+        $status_el.data('is_sticky', true);
+        $status_el.data('sticky_msg', success_msg);
+    }
     settings_ui.do_settings_change(channel.patch, '/json/settings/display', data, status_element, opts);
 }
 
@@ -24,6 +33,7 @@ exports.set_up = function () {
     $("#display-settings-status").hide();
 
     $("#user_timezone").val(page_params.timezone);
+
     $(".emojiset_choice[value=" + page_params.emojiset + "]").prop("checked", true);
 
     $("#default_language_modal [data-dismiss]").click(function () {
@@ -44,7 +54,7 @@ exports.set_up = function () {
         $('#default_language_name').text(new_language);
 
         change_display_setting(data, '#language-settings-status',
-                               i18n.t("Saved. Please <a class='reload_link'>reload</a> for the change to take effect."));
+                               i18n.t("Saved. Please <a class='reload_link'>reload</a> for the change to take effect."), true);
 
     });
 
@@ -61,6 +71,20 @@ exports.set_up = function () {
         change_display_setting(data, '#display-settings-status');
     });
 
+    $("#dense_mode").change(function () {
+        var dense_mode = this.checked;
+        var data = {};
+        data.dense_mode = JSON.stringify(dense_mode);
+        change_display_setting(data, '#display-settings-status');
+    });
+
+    $('#starred_message_counts').change(function () {
+        var starred_message_counts = this.checked;
+        var data = {};
+        data.starred_message_counts = JSON.stringify(starred_message_counts);
+        change_display_setting(data, '#display-settings-status');
+    });
+
     $("#night_mode").change(function () {
         exports.set_night_mode(this.checked);
     });
@@ -74,7 +98,7 @@ exports.set_up = function () {
         var data = {};
         data.left_side_userlist = JSON.stringify(left_side_userlist);
         change_display_setting(data, '#display-settings-status',
-                               i18n.t("Saved. Please <a class='reload_link'>reload</a> for the change to take effect."));
+                               i18n.t("Saved. Please <a class='reload_link'>reload</a> for the change to take effect."), true);
     });
 
     $("#twenty_four_hour_time").change(function () {
@@ -90,7 +114,6 @@ exports.set_up = function () {
         data.timezone = JSON.stringify(timezone);
         change_display_setting(data, '#time-settings-status');
     });
-
     $(".emojiset_choice").click(function () {
         var emojiset = $(this).val();
         var data = {};
@@ -142,14 +165,14 @@ exports.report_emojiset_change = function () {
 
     var sprite = new Image();
     sprite.onload = function () {
-        var sprite_css_href = "/static/generated/emoji/" + page_params.emojiset + "_sprite.css";
+        var sprite_css_href = "/static/generated/emoji/" + page_params.emojiset + "-sprite.css";
         $("#emoji-spritesheet").attr('href', sprite_css_href);
         emoji_success();
     };
-    sprite.src = "/static/generated/emoji/sheet_" + page_params.emojiset + "_64.png";
+    sprite.src = "/static/generated/emoji/sheet-" + page_params.emojiset + "-64.png";
 };
 
-function _update_page() {
+exports.update_page = function () {
     $("#twenty_four_hour_time").prop('checked', page_params.twenty_four_hour_time);
     $("#left_side_userlist").prop('checked', page_params.left_side_userlist);
     $("#default_language_name").text(page_params.default_language_name);
@@ -157,10 +180,6 @@ function _update_page() {
     $("#night_mode").prop('checked', page_params.night_mode);
     // TODO: Set emojiset selector here.
     // Longer term, we'll want to automate this function
-}
-
-exports.update_page = function () {
-    i18n.ensure_i18n(_update_page);
 };
 
 return exports;
@@ -169,3 +188,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = settings_display;
 }
+window.settings_display = settings_display;

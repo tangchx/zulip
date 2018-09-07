@@ -1,31 +1,14 @@
 # -*- coding: utf-8 -*-
-from typing import Text
 
 from zerver.lib.test_classes import WebhookTestCase
+from zerver.lib.users import get_api_key
 
 class JiraHookTests(WebhookTestCase):
     STREAM_NAME = 'jira'
     URL_TEMPLATE = u"/api/v1/external/jira?api_key={api_key}&stream={stream}"
 
-    def test_unknown(self) -> None:
-        url = self.build_webhook_url()
-
-        result = self.client_post(url,
-                                  self.get_body('unknown_v1'),
-                                  stream_name="jira",
-                                  content_type="application/json")
-
-        self.assert_json_success(result)
-
-        result = self.client_post(url,
-                                  self.get_body('unknown_v2'),
-                                  stream_name="jira",
-                                  content_type="application/json")
-
-        self.assert_json_success(result)
-
     def test_custom_stream(self) -> None:
-        api_key = self.test_user.api_key
+        api_key = get_api_key(self.test_user)
         url = "/api/v1/external/jira?api_key=%s&stream=jira_custom" % (api_key,)
         msg = self.send_json_payload(self.test_user,
                                      url,
@@ -119,5 +102,5 @@ Adding a comment. Oh, what a comment it is!"""
             self.send_and_test_stream_message('change_status_v1', expected_subject, expected_message)
             self.send_and_test_stream_message('change_status_v2', expected_subject, expected_message)
 
-    def get_body(self, fixture_name: Text) -> Text:
-        return self.fixture_data('jira', fixture_name)
+    def get_body(self, fixture_name: str) -> str:
+        return self.webhook_fixture_data('jira', fixture_name)

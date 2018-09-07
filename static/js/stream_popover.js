@@ -77,9 +77,9 @@ function update_spectrum(popover, update_func) {
 
     var popover_root = popover.closest(".popover");
     var current_top_px = parseFloat(popover_root.css('top').replace('px', ''));
-    var height_delta = - (after_height - initial_height) * 0.5;
+    var height_delta = -(after_height - initial_height) * 0.5;
 
-    popover_root.css('top', (current_top_px + height_delta) + "px");
+    popover_root.css('top', current_top_px + height_delta + "px");
 }
 
 function build_stream_popover(e) {
@@ -195,14 +195,9 @@ function build_all_messages_popover(e) {
 }
 
 exports.register_click_handlers = function () {
-    $('#stream_filters').on('click',
-        '.stream-sidebar-arrow', build_stream_popover);
-
-    $('#stream_filters').on('click',
-        '.topic-sidebar-arrow', build_topic_popover);
-
-    $('#global_filters').on('click',
-        '.stream-sidebar-arrow', build_all_messages_popover);
+    $('#stream_filters').on('click', '.stream-sidebar-arrow', build_stream_popover);
+    $('#stream_filters').on('click', '.topic-sidebar-arrow', build_topic_popover);
+    $('#global_filters').on('click', '.stream-sidebar-arrow', build_all_messages_popover);
 
     exports.register_stream_handlers();
     exports.register_topic_handlers();
@@ -219,15 +214,14 @@ exports.register_stream_handlers = function () {
 
         subs.onlaunch("narrow_to_row", function () {
             $(".stream-row[data-stream-id='" + sub.stream_id + "']").click();
-        }, true);
+        }, false);
     });
 
     // Narrow to stream
     $('body').on('click', '.narrow_to_stream', function (e) {
         var sub = stream_popover_sub(e);
         exports.hide_stream_popover();
-        narrow.by('stream', sub.name,
-            {select_first_unread: true, trigger: 'sidebar popover'}
+        narrow.by('stream', sub.name, {trigger: 'sidebar popover'}
         );
         e.stopPropagation();
     });
@@ -335,8 +329,7 @@ exports.register_topic_handlers = function () {
             {operator: 'stream', operand: sub.name},
             {operator: 'topic', operand: topic},
         ];
-        var opts = {select_first_unread: true, trigger: 'sidebar'};
-        narrow.activate(operators, opts);
+        narrow.activate(operators, {trigger: 'sidebar'});
 
         e.stopPropagation();
     });
@@ -387,3 +380,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = stream_popover;
 }
+window.stream_popover = stream_popover;

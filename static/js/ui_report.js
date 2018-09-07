@@ -9,7 +9,7 @@ var exports = {};
    type- used to define more complex logic for special cases
 */
 
-exports.message = function (response, status_box, cls, type) {
+exports.message = function (response, status_box, cls, type, remove_after) {
     if (cls === undefined) {
         cls = 'alert';
     }
@@ -21,18 +21,22 @@ exports.message = function (response, status_box, cls, type) {
     // Note we use html() below, since we can rely on our callers escaping HTML
     // via i18n.t when interpolating data.
     status_box.removeClass(common.status_classes).addClass(cls)
-              .html(response).stop(true).fadeTo(0, 1);
-
+        .html(response).stop(true).fadeTo(0, 1);
+    if (remove_after) {
+        setTimeout(function () {
+            status_box.fadeTo(200, 0);
+        }, remove_after);
+    }
     status_box.addClass("show");
 };
 
 function escape(html) {
-  return html
-    .toString()
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    return html
+        .toString()
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 exports.error = function (response, xhr, status_box, type) {
@@ -45,8 +49,8 @@ exports.error = function (response, xhr, status_box, type) {
     exports.message(response, status_box, 'alert-error', type);
 };
 
-exports.success = function (response, status_box, type) {
-    exports.message(response, status_box, 'alert-success', type);
+exports.success = function (response, status_box, type, remove_after) {
+    exports.message(response, status_box, 'alert-success', type, remove_after);
 };
 
 exports.generic_embed_error = function (error) {
@@ -83,3 +87,4 @@ return exports;
 if (typeof module !== 'undefined') {
     module.exports = ui_report;
 }
+window.ui_report = ui_report;

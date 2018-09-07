@@ -1,8 +1,24 @@
-<div class="user-name-section custom_user_field">
-    <label for="{{ field_name }}" class="title">{{ field_name }}</label>
+<div class="user-name-section custom_user_field" name="{{ field.name }}" data-field-id="{{ field.id }}">
+    <label for="{{ field.name }}" class="title">{{ field.name }}</label>
     {{#if is_long_text_field}}
-    <textarea name="{{ field_name }}" id="{{ field_id }}">{{ field_value }}</textarea>
+    <textarea maxlength="500" class="custom_user_field_value">{{ field_value }}</textarea>
+    {{else if is_choice_field}}
+    <select class="custom_user_field_value">
+        <option value=""></option>
+        {{#each field_choices}}
+        <option value="{{ this.value }}" {{#if this.selected}}selected{{/if}}>{{ this.text }}</option>
+        {{/each}}
+    </select>
+    {{else if is_user_field }}
+    <div class="pill-container person_picker">
+        <div class="input" contenteditable="true"></div>
+    </div>
+    {{else if is_date_field }}
+    <input class="custom_user_field_value datepicker" data-field-id="{{ field.id }}" type="text"
+      value="{{ field_value }}" />
+    <span class="remove_date"><i class="fa fa-close"></i></span>
     {{else}}
-    <input type="{{ field_type }}" name="{{ field_name }}" id="{{ field_id }}" value="{{ field_value }}" />
+    <input class="custom_user_field_value" type="{{ field_type }}" value="{{ field_value }}" maxlength="50" />
     {{/if}}
+    <div class="field_hint">{{ field.hint }}</div>
 </div>

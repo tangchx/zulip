@@ -7,6 +7,7 @@ import logging
 import os
 import pwd
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,7 @@ import json
 import uuid
 
 if False:
-    from typing import Sequence, Set, Text, Any
+    from typing import Sequence, Set, Any, Dict, List
 
 DEPLOYMENTS_DIR = "/home/zulip/deployments"
 LOCK_DIR = os.path.join(DEPLOYMENTS_DIR, "lock")
@@ -38,7 +39,7 @@ MAGENTA = '\x1b[35m'
 CYAN = '\x1b[36m'
 
 def parse_cache_script_args(description):
-    # type: (Text) -> argparse.Namespace
+    # type: (str) -> argparse.Namespace
     parser = argparse.ArgumentParser(description=description)
 
     parser.add_argument(
@@ -153,7 +154,7 @@ def release_deployment_lock():
 def run(args, **kwargs):
     # type: (Sequence[str], **Any) -> None
     # Output what we're doing in the `set -x` style
-    print("+ %s" % (" ".join(args)))
+    print("+ %s" % (" ".join(map(shlex.quote, args)),))
 
     if kwargs.get('shell'):
         # With shell=True we can only pass string to Popen
@@ -163,7 +164,8 @@ def run(args, **kwargs):
         subprocess.check_call(args, **kwargs)
     except subprocess.CalledProcessError:
         print()
-        print(WHITEONRED + "Error running a subcommand of %s: %s" % (sys.argv[0], " ".join(args)) +
+        print(WHITEONRED + "Error running a subcommand of %s: %s" %
+              (sys.argv[0], " ".join(map(shlex.quote, args))) +
               ENDC)
         print(WHITEONRED + "Actual error output for the subcommand is just above this." +
               ENDC)
@@ -171,7 +173,7 @@ def run(args, **kwargs):
         raise
 
 def log_management_command(cmd, log_path):
-    # type: (Text, Text) -> None
+    # type: (str, str) -> None
     log_dir = os.path.dirname(log_path)
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
@@ -186,7 +188,7 @@ def log_management_command(cmd, log_path):
     logger.info("Ran '%s'" % (cmd,))
 
 def get_environment():
-    # type: () -> Text
+    # type: () -> str
     if os.path.exists(DEPLOYMENTS_DIR):
         return "prod"
     if os.environ.get("TRAVIS"):
@@ -194,7 +196,7 @@ def get_environment():
     return "dev"
 
 def get_recent_deployments(threshold_days):
-    # type: (int) -> Set[Text]
+    # type: (int) -> Set[str]
     # Returns a list of deployments not older than threshold days
     # including `/root/zulip` directory if it exists.
     recent = set()
@@ -230,7 +232,7 @@ def get_threshold_timestamp(threshold_days):
     return threshold_timestamp
 
 def get_caches_to_be_purged(caches_dir, caches_in_use, threshold_days):
-    # type: (Text, Set[Text], int) -> Set[Text]
+    # type: (str, Set[str], int) -> Set[str]
     # Given a directory containing caches, a list of caches in use
     # and threshold days, this function return a list of caches
     # which can be purged. Remove the cache only if it is:
@@ -250,7 +252,7 @@ def get_caches_to_be_purged(caches_dir, caches_in_use, threshold_days):
     return caches_to_purge
 
 def purge_unused_caches(caches_dir, caches_in_use, cache_type, args):
-    # type: (Text, Set[Text], Text, argparse.Namespace) -> None
+    # type: (str, Set[str], str, argparse.Namespace) -> None
     all_caches = set([os.path.join(caches_dir, cache) for cache in os.listdir(caches_dir)])
     caches_to_purge = get_caches_to_be_purged(caches_dir, caches_in_use, args.threshold_days)
     caches_to_keep = all_caches - caches_to_purge
@@ -261,11 +263,11 @@ def purge_unused_caches(caches_dir, caches_in_use, cache_type, args):
         print("Done!")
 
 def generate_sha1sum_emoji(zulip_path):
-    # type: (Text) -> Text
+    # type: (str) -> str
     ZULIP_EMOJI_DIR = os.path.join(zulip_path, 'tools', 'setup', 'emoji')
     sha = hashlib.sha1()
 
-    filenames = ['emoji_map.json', 'build_emoji', 'emoji_setup_utils.py']
+    filenames = ['emoji_map.json', 'build_emoji', 'emoji_setup_utils.py', 'emoji_names.py']
 
     for filename in filenames:
         file_path = os.path.join(ZULIP_EMOJI_DIR, filename)
@@ -288,7 +290,7 @@ def generate_sha1sum_emoji(zulip_path):
     return sha.hexdigest()
 
 def may_be_perform_purging(dirs_to_purge, dirs_to_keep, dir_type, dry_run, verbose):
-    # type: (Set[Text], Set[Text], Text, bool, bool) -> None
+    # type: (Set[str], Set[str], str, bool, bool) -> None
     if dry_run:
         print("Performing a dry run...")
     else:
@@ -303,3 +305,57 @@ def may_be_perform_purging(dirs_to_purge, dirs_to_keep, dir_type, dry_run, verbo
     for directory in dirs_to_keep:
         if verbose:
             print("Keeping used %s: %s" % (dir_type, directory))
+
+def parse_lsb_release():
+    # type: () -> Dict[str, str]
+    distro_info = {}
+    try:
+        # For performance reasons, we read /etc/lsb-release directly,
+        # rather than using the lsb_release command; this saves ~50ms
+        # in several places in provisioning and the installer
+        with open('/etc/lsb-release', 'r') as fp:
+            data = [line.strip().split('=') for line in fp]
+        for k, v in data:
+            if k not in ['DISTRIB_CODENAME', 'DISTRIB_ID']:
+                # We only return to the caller the values that we get
+                # from lsb_release in the exception code path.
+                continue
+            distro_info[k] = v
+    except FileNotFoundError:
+        # Unfortunately, Debian stretch doesn't yet have an
+        # /etc/lsb-release, so we instead fetch the pieces of data
+        # that we use from the `lsb_release` command directly.
+        vendor = subprocess_text_output(["lsb_release", "-is"])
+        codename = subprocess_text_output(["lsb_release", "-cs"])
+        distro_info = dict(
+            DISTRIB_CODENAME=codename,
+            DISTRIB_ID=vendor
+        )
+    return distro_info
+
+def file_or_package_hash_updated(paths, hash_name, is_force, package_versions=[]):
+    # type: (List[str], str, bool, List[str]) -> bool
+    # Check whether the files or package_versions passed as arguments
+    # changed compared to the last execution.
+    sha1sum = hashlib.sha1()
+    for path in paths:
+        with open(path, 'rb') as file_to_hash:
+            sha1sum.update(file_to_hash.read())
+
+    # The ouput of tools like build_pygments_data depends
+    # on the version of some pip packages as well.
+    for package_version in package_versions:
+        sha1sum.update(package_version.encode("utf-8"))
+
+    hash_path = os.path.join(get_dev_uuid_var_path(), hash_name)
+    new_hash = sha1sum.hexdigest()
+    with open(hash_path, 'a+') as hash_file:
+        hash_file.seek(0)
+        last_hash = hash_file.read()
+
+        if is_force or (new_hash != last_hash):
+            hash_file.seek(0)
+            hash_file.truncate()
+            hash_file.write(new_hash)
+            return True
+    return False
